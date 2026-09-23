@@ -41,8 +41,11 @@ header {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: 12px;
   padding: 18px 28px;
 }
+
+.brand { display: flex; align-items: center; gap: 12px; min-width: 0; }
 
 .logo {
   font-weight: 800;
@@ -56,8 +59,8 @@ header {
 
 .room-info { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
 
-/* Единые пилюли в шапке: имя, комната, кнопки */
-#roomLabel, #nameInput, #copyLink, #leaveRoom, #micBtn {
+/* Единая система пилюль: код комнаты, имя, кнопки */
+#roomLabel, #nameInput, #copyLink, #leaveRoom {
   height: 40px;
   padding: 0 16px;
   border: 1px solid var(--border);
@@ -73,12 +76,16 @@ header {
   backdrop-filter: blur(8px);
   transition: border-color 0.2s, box-shadow 0.2s, transform 0.15s;
 }
-#roomLabel { color: var(--muted); }
+#roomLabel {
+  color: var(--accent2);
+  letter-spacing: 2px;
+  cursor: pointer;
+  white-space: nowrap;
+}
 #nameInput { width: 150px; outline: none; }
-#nameInput:focus, #copyLink:hover, #leaveRoom:hover, #micBtn:hover { border-color: var(--accent); }
-#copyLink:hover, #leaveRoom:hover, #micBtn:hover { transform: none; box-shadow: none; }
-#micBtn { cursor: pointer; }
-#micBtn.on { border-color: #3ddc84; color: #3ddc84; box-shadow: 0 0 0 1px rgba(61, 220, 132, 0.4), 0 0 16px rgba(61, 220, 132, 0.35); }
+#roomLabel:hover, #nameInput:focus, #copyLink:hover, #leaveRoom:hover { border-color: var(--accent); }
+#copyLink:hover, #leaveRoom:hover { transform: none; box-shadow: none; }
+#copyLink .ico, #leaveRoom .ico { display: none; font-size: 15px; line-height: 1; }
 
 button {
   background: var(--grad);
@@ -144,20 +151,20 @@ main {
   font-size: 22px;
   padding-left: 4px;
 }
-
-#statusRow { display: flex; gap: 10px; align-items: center; margin-top: 14px; }
-
-.badge {
-  font-size: 11px;
-  font-weight: 800;
-  padding: 5px 12px;
+/* Всплывает только когда зритель не смог стартовать сам (autoplay-политика браузера) */
+#syncHint {
+  position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%);
+  z-index: 3;
+  background: rgba(10, 10, 15, 0.82);
+  border: 1px solid var(--accent);
+  color: var(--text);
   border-radius: 999px;
-  text-transform: uppercase;
-  letter-spacing: 0.6px;
+  padding: 9px 18px;
+  font-size: 13px; font-weight: 700;
+  backdrop-filter: blur(10px);
+  box-shadow: var(--shadow);
+  white-space: nowrap;
 }
-.badge.host { background: rgba(124, 108, 255, 0.18); color: #b7abff; border: 1px solid rgba(124, 108, 255, 0.45); }
-.badge.guest { background: rgba(62, 198, 255, 0.12); color: #8fdcff; border: 1px solid rgba(62, 198, 255, 0.35); }
-#syncStatus { color: var(--muted); font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; }
 
 /* ---------- Search ---------- */
 #searchPanel {
@@ -222,10 +229,7 @@ input::placeholder { color: #6b7189; }
 .res .t { font-size: 13px; font-weight: 600; line-height: 1.35; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .res .s { font-size: 12px; color: var(--muted); margin-top: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
-#linkDetails { margin-top: 12px; }
-#linkDetails summary { color: var(--muted); font-size: 13px; cursor: pointer; font-weight: 600; }
-#linkDetails summary:hover { color: var(--text); }
-#mediaBar { display: flex; gap: 10px; margin-top: 10px; }
+#searchHint { color: var(--muted); font-size: 12px; font-weight: 600; margin-top: 8px; min-height: 16px; }
 
 /* ---------- Sidebar ---------- */
 .side-col {
@@ -247,6 +251,30 @@ input::placeholder { color: #6b7189; }
   color: var(--muted);
   margin: 12px 0 8px;
 }
+
+.chat-head { display: flex; align-items: center; gap: 10px; }
+.chat-head h3 { margin: 12px 0 8px; }
+
+/* Микрофон — маленькая круглая кнопка как в мессенджерах, рядом с чатом */
+#micBtn {
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  background: var(--panel);
+  color: var(--text);
+  font-size: 15px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  backdrop-filter: blur(8px);
+  transition: border-color 0.2s, box-shadow 0.2s, color 0.2s;
+}
+#micBtn:hover { transform: none; box-shadow: none; border-color: var(--accent); }
+#micBtn.on { color: #3ddc84; border-color: #3ddc84; box-shadow: 0 0 0 1px rgba(61, 220, 132, 0.4), 0 0 16px rgba(61, 220, 132, 0.35); }
 
 #presence { list-style: none; font-size: 14px; max-height: 120px; overflow: auto; display: flex; flex-direction: column; gap: 4px; }
 #presence li {
@@ -372,20 +400,32 @@ body:not(.in-room) header .room-info { display: none; }
 /* ---------- Телефон ---------- */
 @media (max-width: 700px) {
   body { font-size: 14px; }
-  header { flex-wrap: wrap; gap: 10px; padding: 12px 14px; }
-  header .logo { font-size: 19px; }
-  .room-info { flex: 1 1 100%; justify-content: center; }
-  #nameInput { width: 116px; }
+  header { gap: 8px; padding: 10px 12px; }
+  header .logo { font-size: 15px; letter-spacing: -0.3px; }
+  .brand { gap: 6px; min-width: 0; }
+  .room-info { gap: 6px; flex-wrap: nowrap; flex: 1 1 auto; min-width: 0; justify-content: flex-end; }
+
+  /* одна компактная строка: код + имя + две круглые кнопки */
+  #roomLabel, #nameInput, #copyLink, #leaveRoom { height: 34px; font-size: 13px; }
+  #roomLabel { padding: 0 11px; letter-spacing: 1.5px; flex-shrink: 0; }
+  #roomLabel .lbl { display: none; }
+  #nameInput { width: 84px; min-width: 56px; flex: 1 1 84px; padding: 0 12px; font-size: 16px; }
+  #copyLink, #leaveRoom { width: 34px; flex-shrink: 0; padding: 0; justify-content: center; }
+  #copyLink .lbl, #leaveRoom .lbl { display: none; }
+  #copyLink .ico, #leaveRoom .ico { display: inline; }
+
   main { padding: 4px 12px 18px; gap: 14px; }
   #playerBox { border-radius: 14px; }
   #searchPanel { padding: 10px; border-radius: 14px; }
-  input[type='text'] { font-size: 16px; } /* iOS: меньше 16px — автозум при фокусе */
+  .tabs button { padding: 6px 13px; font-size: 12px; }
+  input[type='text'] { font-size: 16px; }
   #results { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); max-height: 300px; }
   .res img { width: 88px; height: 50px; }
+  #syncHint { font-size: 12px; padding: 8px 14px; }
   .side-col { max-height: none; border-radius: 16px; }
+  #presence { max-height: 76px; }
   #chat { min-height: 140px; max-height: 280px; }
   #lobby { padding: 14px; }
   .lobby-card { padding: 26px 18px; border-radius: 20px; gap: 12px; }
   .lobby-logo { font-size: 27px; }
-  #statusRow { flex-wrap: wrap; }
 }

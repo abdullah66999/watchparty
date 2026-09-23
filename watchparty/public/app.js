@@ -39,7 +39,7 @@ function enterRoom(code) {
   history.replaceState(null, '', `/?room=${code}`);
   $('lobby').classList.add('hidden');
   document.body.classList.add('in-room');
-  $('roomLabel').textContent = `Комната: ${code}`;
+  $('roomLabel').innerHTML = `<span class="lbl">Код&nbsp;</span>${escapeHtml(code)}`;
   connect();
 }
 
@@ -230,8 +230,8 @@ function updateMicBtn() {
   const b = $('micBtn');
   if (!b) return;
   b.classList.toggle('on', micOn);
-  b.textContent = micOn ? '🎙 Говоришь' : '🎙 Микрофон';
   b.title = micOn ? 'Выключить микрофон' : 'Включить микрофон';
+  b.setAttribute('aria-label', b.title);
 }
 
 $('micBtn').onclick = toggleMic;
@@ -290,10 +290,10 @@ window.onYouTubeIframeAPIReady = () => {
 
 function setHost(v) {
   isHost = v;
-  $('youRole').textContent = v ? 'ХОСТ — управляешь воспроизведением' : 'зритель — синхронизируется';
-  $('youRole').className = 'badge ' + (v ? 'host' : 'guest');
-  $('linkDetails').style.display = v ? '' : 'none';
-  $('qInput').placeholder = v ? 'Название фильма, клипа, шоу…' : 'Видео выбирает хост ↑';
+  document.body.dataset.role = v ? 'host' : 'guest';
+  $('qInput').placeholder = v ? 'Название или ссылка…' : 'Видео выбирает хост — просто смотри';
+  $('searchHint').textContent = v ? 'Кликни по карточке — видео включится у всех. Можно вставить и ссылку.' : '';
+  if (!v) hideHint();
 }
 
 function hideAllPlayers() {
@@ -301,8 +301,14 @@ function hideAllPlayers() {
   $('vkBox').classList.add('hidden');
 }
 
+let mediaToken = 0;
+
 function loadMedia(media, state) {
   currentVideo = media;
+  const token = ++mediaToken;
+  lastSeekAt = 0;
+  stuckTicks = 0;
+  hideHint();
   $('placeholder').classList.add('hidden');
   if (media.kind === 'vk') {
     if (playerReady) {
@@ -317,7 +323,8 @@ function loadMedia(media, state) {
     vkAd = false;
     vkDuration = 0;
     $('vkFrame').src = `https://vk.com/video_ext.php?oid=${media.oid}&id=${media.id}&hd=2&js_api=1&origin=${encodeURIComponent(location.origin)}`;
-    setTimeout(() => applyState(state || { playing: false, time: 0, at: Date.now() }), 1500);
+    // хост сам решает, когда жать ▶; зрителю подставляем состояние комнаты, когда iframe поднялся
+    setTimeout(() => token === mediaToken && !isHost && state && applyState(state), 1500);
     return;
   }
   hideAllPlayers();
@@ -326,10 +333,14 @@ function loadMedia(media, state) {
   if (playerReady) {
     applyingRemote = true;
     player.loadVideoById(media.videoId);
-    if (state && !state.playing) player.pauseVideo();
+    if (state && !state.playing) {
+      try {
+        player.pauseVideo();
+      } catch {}
+    }
     setTimeout(() => {
       applyingRemote = false;
-      if (state) applyState(state);
+      if (token === mediaToken && !isHost && state) applyState(state);
     }, 800);
   }
 }
@@ -339,6 +350,8 @@ let vkTime = 0;
 let vkPlaying = false;
 let vkDuration = 0;
 let vkAd = false;
+let lastSeekAt = 0;
+let stuckTicks = 0;
 
 function vkCommand(method, value) {
   const f = $('vkFrame');
@@ -396,28 +409,70 @@ function reportState() {
   send({ type: 'sync', playing, time: playerTime() });
 }
 
-function applyState(state) {
-  if (!currentVideo) return;
-  if (currentVideo.kind === 'vk') {
-    applyingRemote = true;
-    const expected = state.playing ? state.time + (Date.now() - state.at) / 1000 : state.time;
-    const drift = Math.abs(vkTime - expected);
-    if (drift > 1.5) vkCommand('seek', expected);
-    if (state.playing && !document.hidden) vkCommand('play');
-    else vkCommand('pause');
-    $('syncStatus').textContent = `синхр. ${expected.toFixed(0)}s · дрейф ${drift.toFixed(1)}s`;
-    setTimeout(() => (applyingRemote = false), 800);
-    return;
+function nowPlaying() {
+  if (!currentVideo) return true;
+  if (currentVideo.kind === 'vk') return vkPlaying;
+  try {
+    return !playerReady || player.getPlayerState() === YT.PlayerState.PLAYING;
+  } catch {
+    return true;
   }
-  if (!playerReady) return;
-  applyingRemote = true;
+}
+
+function playNow() {
+  if (!currentVideo) return;
+  if (currentVideo.kind === 'vk') vkCommand('play');
+  else if (playerReady) {
+    try {
+      player.playVideo();
+    } catch {}
+  }
+}
+
+function hideHint() {
+  stuckTicks = 0;
+  const h = $('syncHint');
+  if (h) h.classList.add('hidden');
+}
+
+$('syncHint').onclick = () => {
+  hideHint();
+  playNow();
+  if (lastState) applyState(lastState);
+};
+
+// Зритель: подтягиваемся к состоянию комнаты. Команды шлём только при реальном расхождении —
+// иначе каждые 2 секунды летит лишний play/pause/seek и плеер «заикается» на одном устройстве.
+function applyState(state) {
+  if (!currentVideo || !state || isHost) return;
+  if (document.hidden) return; // фоновая вкладка всё равно не играет — вернёмся на visibilitychange
+  if (currentVideo.kind === 'vk' && vkAd) return; // время рекламы — не время фильма
   const expected = state.playing ? state.time + (Date.now() - state.at) / 1000 : state.time;
-  const drift = Math.abs(playerTime() - expected);
-  if (drift > 1.2) player.seekTo(expected, true);
-  if (state.playing && !document.hidden) player.playVideo();
-  else player.pauseVideo();
-  $('syncStatus').textContent = `синхр. ${expected.toFixed(0)}s · дрейф ${drift.toFixed(1)}s`;
-  setTimeout(() => (applyingRemote = false), 500);
+  const drift = Math.abs(currentVideo.kind === 'vk' ? vkTime - expected : playerTime() - expected);
+
+  if (state.playing && !nowPlaying()) playNow();
+  if (!state.playing && nowPlaying()) {
+    if (currentVideo.kind === 'vk') vkCommand('pause');
+    else if (playerReady) player.pauseVideo();
+  }
+  if (drift > 2 && Date.now() - lastSeekAt > 4000) {
+    lastSeekAt = Date.now();
+    if (currentVideo.kind === 'vk') {
+      vkTime = expected; // не ждём события seeked: с ним VK иногда не отвечает и мы мотали каждые 2с
+      vkCommand('seek', expected);
+    } else if (playerReady) {
+      applyingRemote = true;
+      player.seekTo(expected, true);
+      setTimeout(() => (applyingRemote = false), 500);
+    }
+  }
+
+  if (state.playing && !nowPlaying()) {
+    if (++stuckTicks >= 3) $('syncHint').classList.remove('hidden');
+  } else {
+    stuckTicks = 0;
+    $('syncHint').classList.add('hidden');
+  }
 }
 
 // host: heartbeat sync + guest drift check
@@ -436,19 +491,32 @@ onMessage = (msg) => {
 document.addEventListener('visibilitychange', () => !document.hidden && lastState && !isHost && applyState(lastState));
 
 // ---------- UI ----------
-$('setUrl').onclick = async () => {
-  const url = $('urlInput').value.trim();
-  if (!url) return;
-  send({ type: 'setMedia', url });
-};
-$('urlInput').addEventListener('keydown', (e) => e.key === 'Enter' && $('setUrl').click());
+async function copyRoomLink(btn) {
+  const lbl = btn.querySelector('.lbl');
+  const target = lbl || btn;
+  const old = target.textContent;
+  try {
+    await navigator.clipboard.writeText(location.href);
+    target.textContent = 'Скопировано!';
+  } catch {
+    target.textContent = room || '';
+  }
+  setTimeout(() => (target.textContent = old), 1500);
+}
+
+$('copyLink').onclick = (e) => copyRoomLink(e.currentTarget);
+$('roomLabel').onclick = (e) => copyRoomLink(e.currentTarget);
 
 // ---------- Поиск в каталоге (как в Rave) ----------
 let provider = 'youtube';
+const LINK_RE = /(?:youtube\.com\/(?:watch\?v=|live\/|embed\/|shorts\/)|youtu\.be\/)[\w-]{11}|(?:vk\.com|vkvideo\.ru)\/(?:#|video|clip)-?\d+_\d+/;
+
 document.querySelectorAll('.tabs button').forEach((b) => {
   b.onclick = () => {
     provider = b.dataset.p;
     document.querySelectorAll('.tabs button').forEach((x) => x.classList.toggle('active', x === b));
+    if (LINK_RE.test($('qInput').value.trim())) return;
+    if ($('qInput').value.trim() || $('results').children.length) doSearch(); // ищем сразу в этой вкладке
   };
 });
 $('searchBtn').onclick = doSearch;
@@ -457,6 +525,13 @@ $('qInput').addEventListener('keydown', (e) => e.key === 'Enter' && doSearch());
 async function doSearch() {
   const q = $('qInput').value.trim();
   if (!q) return;
+  if (!isHost) return alert('Видео выбирает хост — попроси его');
+  if (LINK_RE.test(q)) {
+    $('results').innerHTML = '';
+    send({ type: 'setMedia', url: q }); // ссылка прямо в строке поиска
+    $('qInput').value = '';
+    return;
+  }
   $('results').innerHTML = '<div class="hint">Ищу…</div>';
   let data;
   try {
@@ -487,12 +562,6 @@ async function pick(v) {
   $('results').innerHTML = '';
   $('qInput').value = '';
 }
-
-$('copyLink').onclick = async () => {
-  await navigator.clipboard.writeText(location.href);
-  $('copyLink').textContent = 'Скопировано!';
-  setTimeout(() => ($('copyLink').textContent = 'Скопировать ссылку'), 1500);
-};
 
 $('chatForm').onsubmit = (e) => {
   e.preventDefault();

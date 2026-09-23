@@ -23,13 +23,18 @@
     </div>
 
     <header>
-      <div class="logo">WatchParty</div>
+      <div class="brand">
+        <div class="logo">WatchParty</div>
+        <button id="roomLabel" class="code" title="Скопировать ссылку на комнату"></button>
+      </div>
       <div class="room-info">
         <input id="nameInput" placeholder="Твоё имя" maxlength="32" />
-        <span id="roomLabel"></span>
-        <button id="micBtn" class="ghost" title="Включить микрофон">🎙 Микрофон</button>
-        <button id="copyLink" class="ghost">Скопировать ссылку</button>
-        <button id="leaveRoom" class="ghost">Выйти</button>
+        <button id="copyLink" class="ghost" title="Скопировать ссылку на комнату">
+          <span class="ico">🔗</span><span class="lbl">Скопировать ссылку</span>
+        </button>
+        <button id="leaveRoom" class="ghost" title="Выйти из комнаты">
+          <span class="ico">✕</span><span class="lbl">Выйти</span>
+        </button>
       </div>
     </header>
 
@@ -45,6 +50,7 @@
             ></iframe>
           </div>
           <div id="placeholder">Найди видео через поиск или вставь ссылку</div>
+          <button id="syncHint" class="hidden">▶ Нажми, чтобы догнать остальных</button>
         </div>
         <div id="searchPanel">
           <div class="tabs">
@@ -52,28 +58,21 @@
             <button data-p="vk">VK Видео</button>
           </div>
           <div id="searchRow">
-            <input id="qInput" type="text" placeholder="Название фильма, клипа, шоу…" maxlength="100" />
+            <input id="qInput" type="text" placeholder="Название фильма, клипа, шоу…" maxlength="100" autocomplete="off" />
             <button id="searchBtn">Поиск</button>
           </div>
+          <div id="searchHint"></div>
           <div id="results"></div>
-        </div>
-        <details id="linkDetails">
-          <summary>…или вставь ссылку</summary>
-          <div id="mediaBar">
-            <input id="urlInput" type="text" placeholder="YouTube или VK Видео — ссылка на фильм/клип" />
-            <button id="setUrl">Показать всем</button>
-          </div>
-        </details>
-        <div id="statusRow">
-          <span id="youRole" class="badge"></span>
-          <span id="syncStatus"></span>
         </div>
       </section>
 
       <aside class="side-col">
         <h3>В комнате</h3>
         <ul id="presence"></ul>
-        <h3>Чат</h3>
+        <div class="chat-head">
+          <h3>Чат</h3>
+          <button id="micBtn" class="mic" title="Включить микрофон" aria-label="Микрофон">🎙</button>
+        </div>
         <div id="chat"></div>
         <form id="chatForm">
           <input id="chatInput" type="text" placeholder="Сообщение…" maxlength="500" autocomplete="off" />
