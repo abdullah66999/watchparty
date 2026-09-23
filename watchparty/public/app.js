@@ -32,7 +32,6 @@ function showLobby(hint) {
   document.body.classList.remove('in-room');
   $('lobby').classList.remove('hidden');
   $('lobbyHint').textContent = hint || '';
-  if (params.get('auth_error')) $('lobbyHint').textContent = 'Google-вход не завершился — попробуй ещё раз';
 }
 
 function enterRoom(code) {
@@ -41,8 +40,6 @@ function enterRoom(code) {
   $('lobby').classList.add('hidden');
   document.body.classList.add('in-room');
   $('roomLabel').textContent = `Комната: ${code}`;
-  const ga = $('gauth');
-  if ((ga.getAttribute('href') || '').startsWith('/auth/google')) ga.href = '/auth/google?r=' + encodeURIComponent(code);
   connect();
 }
 
@@ -89,9 +86,17 @@ $('nameInput').addEventListener('change', (e) => {
 });
 
 // ---------- WebSocket ----------
+let CID = sessionStorage.getItem('wp_cid');
+if (!CID) {
+  CID = Math.random().toString(36).slice(2) + Date.now().toString(36);
+  sessionStorage.setItem('wp_cid', CID);
+}
+
 function connect() {
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-  ws = new WebSocket(`${proto}://${location.host}/ws?room=${encodeURIComponent(room)}&name=${encodeURIComponent(name)}`);
+  ws = new WebSocket(
+    `${proto}://${location.host}/ws?room=${encodeURIComponent(room)}&name=${encodeURIComponent(name)}&cid=${encodeURIComponent(CID)}`
+  );
   ws.onclose = () => !leaving && setTimeout(connect, 1500);
   ws.onmessage = (e) => onMessage(JSON.parse(e.data));
 }
@@ -100,18 +105,158 @@ function send(msg) {
   if (ws && ws.readyState === 1) ws.send(JSON.stringify(msg));
 }
 
+// ---------- Голосовой чат: WebRTC P2P-сетка, сигнализация через тот же WS ----------
+const RTC_CONFIG = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
+let localStream = null;
+let micOn = false;
+const voicePeers = new Map(); // peerId -> { pc, polite, makingOffer, ignoreOffer }
+const remoteAudio = new Map(); // peerId -> HTMLAudioElement
+
+function getVoicePeer(id) {
+  let e = voicePeers.get(id);
+  if (e) return e;
+  const pc = new RTCPeerConnection(RTC_CONFIG);
+  e = { pc, polite: me < id, makingOffer: false, ignoreOffer: false };
+  voicePeers.set(id, e);
+  if (localStream) for (const t of localStream.getTracks()) pc.addTrack(t, localStream);
+  pc.onnegotiationneeded = async () => {
+    try {
+      e.makingOffer = true;
+      await pc.setLocalDescription();
+      send({ type: 'signal', to: id, data: { description: pc.localDescription } });
+    } catch (err) {
+      console.error('negotiation', err);
+    } finally {
+      e.makingOffer = false;
+    }
+  };
+  pc.onicecandidate = ({ candidate }) => {
+    if (candidate) send({ type: 'signal', to: id, data: { candidate } });
+  };
+  pc.ontrack = ({ streams }) => {
+    if (streams && streams[0]) attachRemoteAudio(id, streams[0]);
+  };
+  return e;
+}
+
+async function handleSignal(from, data) {
+  if (!from || !data) return;
+  const e = getVoicePeer(from);
+  const pc = e.pc;
+  try {
+    if (data.description) {
+      const desc = data.description;
+      const collision = desc.type === 'offer' && (e.makingOffer || pc.signalingState !== 'stable');
+      e.ignoreOffer = !e.polite && collision;
+      if (e.ignoreOffer) return;
+      await pc.setRemoteDescription(desc);
+      if (desc.type === 'offer') {
+        await pc.setLocalDescription();
+        send({ type: 'signal', to: from, data: { description: pc.localDescription } });
+      }
+    } else if (data.candidate) {
+      try {
+        await pc.addIceCandidate(data.candidate);
+      } catch (err) {
+        if (!e.ignoreOffer) console.error('ice', err);
+      }
+    }
+  } catch (err) {
+    console.error('signal', err);
+  }
+}
+
+function syncVoicePeers(list) {
+  const ids = new Set(list.filter((p) => p.id !== me).map((p) => p.id));
+  for (const id of ids) getVoicePeer(id);
+  for (const [id, e] of voicePeers) {
+    if (!ids.has(id)) {
+      try {
+        e.pc.close();
+      } catch {}
+      detachRemoteAudio(id);
+      voicePeers.delete(id);
+    }
+  }
+}
+
+function attachRemoteAudio(id, stream) {
+  let a = remoteAudio.get(id);
+  if (!a) {
+    a = document.createElement('audio');
+    a.autoplay = true;
+    document.body.appendChild(a);
+    remoteAudio.set(id, a);
+  }
+  if (a.srcObject !== stream) {
+    a.srcObject = stream;
+    a.play().catch(() => {});
+  }
+}
+
+function detachRemoteAudio(id) {
+  const a = remoteAudio.get(id);
+  if (a) {
+    a.pause();
+    a.srcObject = null;
+    a.remove();
+    remoteAudio.delete(id);
+  }
+}
+
+async function toggleMic() {
+  if (!micOn) {
+    if (!localStream) {
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return alert('Браузер не поддерживает микрофон');
+      try {
+        localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+      } catch {
+        return alert('Нет доступа к микрофону — разреши его в настройках браузера');
+      }
+      for (const [, e] of voicePeers) for (const t of localStream.getTracks()) e.pc.addTrack(t, localStream);
+    }
+    localStream.getAudioTracks().forEach((t) => (t.enabled = true));
+    micOn = true;
+    send({ type: 'voice', on: true });
+  } else {
+    if (localStream) localStream.getAudioTracks().forEach((t) => (t.enabled = false));
+    micOn = false;
+    send({ type: 'voice', on: false });
+  }
+  updateMicBtn();
+}
+
+function updateMicBtn() {
+  const b = $('micBtn');
+  if (!b) return;
+  b.classList.toggle('on', micOn);
+  b.textContent = micOn ? '🎙 Говоришь' : '🎙 Микрофон';
+  b.title = micOn ? 'Выключить микрофон' : 'Включить микрофон';
+}
+
+$('micBtn').onclick = toggleMic;
+
 function onMessage(msg) {
   switch (msg.type) {
     case 'hello':
       me = msg.you;
       setHost(msg.host);
       renderPresence(msg.presence);
+      syncVoicePeers(msg.presence);
       if (msg.media) loadMedia(msg.media, msg.state);
       msg.chat.forEach(addChat);
       break;
     case 'presence':
       renderPresence(msg.presence);
-      if (!msg.presence.some((p) => p.host)) setHost(true);
+      syncVoicePeers(msg.presence);
+      {
+        const mine = msg.presence.find((p) => p.id === me);
+        if (mine) setHost(mine.host);
+        else if (!msg.presence.some((p) => p.host)) setHost(true);
+      }
+      break;
+    case 'signal':
+      handleSignal(msg.from, msg.data);
       break;
     case 'media':
       loadMedia(msg.media, msg.state);
@@ -154,16 +299,11 @@ function setHost(v) {
 function hideAllPlayers() {
   $('player').classList.add('hidden');
   $('vkBox').classList.add('hidden');
-  $('driveBox').classList.add('hidden');
 }
 
 function loadMedia(media, state) {
   currentVideo = media;
   $('placeholder').classList.add('hidden');
-  if (media.kind !== 'drive') {
-    driveVideo.pause();
-    driveVideo.removeAttribute('src');
-  }
   if (media.kind === 'vk') {
     if (playerReady) {
       try {
@@ -178,32 +318,6 @@ function loadMedia(media, state) {
     vkDuration = 0;
     $('vkFrame').src = `https://vk.com/video_ext.php?oid=${media.oid}&id=${media.id}&hd=2&js_api=1&origin=${encodeURIComponent(location.origin)}`;
     setTimeout(() => applyState(state || { playing: false, time: 0, at: Date.now() }), 1500);
-    return;
-  }
-  if (media.kind === 'drive') {
-    if (playerReady) {
-      try {
-        player.pauseVideo();
-      } catch {}
-    }
-    hideAllPlayers();
-    $('driveBox').classList.remove('hidden');
-    const v = $('driveVideo');
-    if (media.tok) {
-      const want = `/api/drive/media/${encodeURIComponent(media.fileId)}?tok=${encodeURIComponent(media.tok)}`;
-      if (v.getAttribute('src') !== want) {
-        v.pause();
-        v.src = want;
-        v.load();
-      }
-      $('placeholder').classList.add('hidden');
-    } else {
-      v.pause();
-      v.removeAttribute('src');
-      $('placeholder').textContent = 'Нет доступа к файлу: хосту нужно войти через Google и выбрать фильм во вкладке «Мой Диск»';
-      $('placeholder').classList.remove('hidden');
-    }
-    setTimeout(() => applyState(state || { playing: false, time: 0, at: Date.now() }), 600);
     return;
   }
   hideAllPlayers();
@@ -261,49 +375,6 @@ window.addEventListener('message', (e) => {
   if (isHost && !applyingRemote && ['started', 'resumed', 'paused', 'seeked', 'ended'].includes(ev)) reportState();
 });
 
-// ---------- Drive player (нативный <video>, сервер проксирует файл по току) ----------
-const driveVideo = $('driveVideo');
-driveVideo.addEventListener('play', () => {
-  if (!isHost) {
-    if (!lastState || !lastState.playing) {
-      driveVideo.pause();
-      $('syncStatus').textContent = 'Видео запускает только хост';
-    }
-    return;
-  }
-  if (!applyingRemote) reportState();
-});
-['pause', 'seeked', 'ended'].forEach((ev) =>
-  driveVideo.addEventListener(ev, () => {
-    if (isHost && !applyingRemote) reportState();
-  })
-);
-driveVideo.addEventListener('error', () => {
-  if (currentVideo && currentVideo.kind === 'drive' && driveVideo.currentSrc) {
-    $('placeholder').textContent = 'Стрим с Диска не загрузился — перечитай страницу; хосту, возможно, нужно заново войти в Google';
-    $('placeholder').classList.remove('hidden');
-  }
-});
-
-function driveState() {
-  return { playing: !driveVideo.paused && !driveVideo.ended, time: driveVideo.currentTime || 0 };
-}
-
-// запуск сразу по клику хоста (пока браузер считает это жестом пользователя)
-function startDriveLocal(fileId, tok) {
-  currentVideo = { kind: 'drive', fileId, tok };
-  hideAllPlayers();
-  $('driveBox').classList.remove('hidden');
-  $('placeholder').classList.add('hidden');
-  const want = `/api/drive/media/${encodeURIComponent(fileId)}?tok=${encodeURIComponent(tok)}`;
-  if (driveVideo.getAttribute('src') !== want) {
-    driveVideo.src = want;
-    driveVideo.load();
-  }
-  driveVideo.currentTime = 0;
-  driveVideo.play().catch(() => {});
-}
-
 function playerTime() {
   try {
     return player.getCurrentTime() || 0;
@@ -316,10 +387,6 @@ function reportState() {
   if (!isHost) return;
   if (currentVideo && currentVideo.kind === 'vk') {
     return send({ type: 'sync', playing: vkPlaying, time: vkTime });
-  }
-  if (currentVideo && currentVideo.kind === 'drive') {
-    const s = driveState();
-    return send({ type: 'sync', playing: s.playing, time: s.time });
   }
   if (!playerReady) return;
   let playing = false;
@@ -338,19 +405,6 @@ function applyState(state) {
     if (drift > 1.5) vkCommand('seek', expected);
     if (state.playing && !document.hidden) vkCommand('play');
     else vkCommand('pause');
-    $('syncStatus').textContent = `синхр. ${expected.toFixed(0)}s · дрейф ${drift.toFixed(1)}s`;
-    setTimeout(() => (applyingRemote = false), 800);
-    return;
-  }
-  if (currentVideo.kind === 'drive') {
-    if (isHost) return; // хост сам управляет своим <video>, чужое состояние применять не нужно
-    if (!driveVideo.currentSrc && !driveVideo.src) return; // нет доступа к файлу
-    applyingRemote = true;
-    const expected = state.playing ? state.time + (Date.now() - state.at) / 1000 : state.time;
-    const drift = Math.abs((driveVideo.currentTime || 0) - expected);
-    if (drift > 1.5 && driveVideo.readyState >= 1) driveVideo.currentTime = expected;
-    if (state.playing && !document.hidden) driveVideo.play().catch(() => {});
-    else driveVideo.pause();
     $('syncStatus').textContent = `синхр. ${expected.toFixed(0)}s · дрейф ${drift.toFixed(1)}s`;
     setTimeout(() => (applyingRemote = false), 800);
     return;
@@ -385,21 +439,6 @@ document.addEventListener('visibilitychange', () => !document.hidden && lastStat
 $('setUrl').onclick = async () => {
   const url = $('urlInput').value.trim();
   if (!url) return;
-  const m = url.match(/drive\.google\.com\/file\/d\/([\w-]{10,200})/);
-  if (m && gUser) {
-    $('urlInput').value = '';
-    try {
-      const r = await (await fetch('/api/drive/open', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ fileId: m[1] }) })).json();
-      if (r.ok) {
-        startDriveLocal(r.fileId, r.tok);
-        return send({ type: 'setMedia', media: { kind: 'drive', fileId: r.fileId, tok: r.tok } });
-      }
-      alert(r.error || 'Не удалось открыть доступ к файлу');
-    } catch {
-      alert('Сервер недоступен');
-    }
-    return;
-  }
   send({ type: 'setMedia', url });
 };
 $('urlInput').addEventListener('keydown', (e) => e.key === 'Enter' && $('setUrl').click());
@@ -415,47 +454,13 @@ document.querySelectorAll('.tabs button').forEach((b) => {
 $('searchBtn').onclick = doSearch;
 $('qInput').addEventListener('keydown', (e) => e.key === 'Enter' && doSearch());
 
-// ---------- Вход через Google ----------
-let gUser = null;
-async function refreshAuth() {
-  try {
-    const r = await (await fetch('/api/me')).json();
-    gUser = r.user;
-  } catch {
-    gUser = null;
-  }
-  const el = $('gauth');
-  if (gUser) {
-    const label = gUser.name?.trim() || (gUser.email || '').split('@')[0] || 'Google';
-    el.innerHTML = `<span class="gdot"></span>${escapeHtml(label)}`;
-    el.title = `${gUser.email || ''} — нажми, чтобы выйти из Google`;
-    el.href = '#';
-    el.onclick = async (e) => {
-      e.preventDefault();
-      await fetch('/api/logout', { method: 'POST' });
-      refreshAuth();
-    };
-  } else {
-    el.textContent = 'Войти через Google';
-    el.title = '';
-    el.href = '/auth/google' + (room ? '?r=' + encodeURIComponent(room) : '');
-    el.onclick = null;
-  }
-}
-refreshAuth();
-
 async function doSearch() {
   const q = $('qInput').value.trim();
-  if (provider === 'drive' && !gUser) {
-    $('results').innerHTML = '<div class="hint">Войди через Google (кнопка сверху), чтобы выбирать фильмы со своего Диска</div>';
-    return;
-  }
-  if (!q && provider !== 'drive') return;
+  if (!q) return;
   $('results').innerHTML = '<div class="hint">Ищу…</div>';
   let data;
   try {
-    const endpoint = provider === 'drive' ? '/api/drive/videos' : '/search';
-    data = await (await fetch(`${endpoint}?provider=${provider}&q=${encodeURIComponent(q)}`)).json();
+    data = await (await fetch(`/search?provider=${provider}&q=${encodeURIComponent(q)}`)).json();
   } catch {
     $('results').innerHTML = '<div class="hint">Сервер недоступен</div>';
     return;
@@ -478,24 +483,6 @@ async function doSearch() {
 
 async function pick(v) {
   if (!isHost) return alert('Видео выбирает хост — попроси его кликнуть');
-  if (v.kind === 'drive') {
-    $('results').innerHTML = '<div class="hint">Открываю доступ к файлу для зрителей…</div>';
-    let r;
-    try {
-      r = await (await fetch('/api/drive/open', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ fileId: v.fileId }) })).json();
-    } catch {
-      r = { ok: false, error: 'Сервер недоступен' };
-    }
-    if (!r.ok) {
-      $('results').innerHTML = `<div class="hint">${escapeHtml(r.error || 'Не удалось открыть доступ')} — можно попробовать вставить ссылку вручную</div>`;
-      return;
-    }
-    $('results').innerHTML = '';
-    $('qInput').value = '';
-    startDriveLocal(r.fileId, r.tok);
-    send({ type: 'setMedia', media: { kind: 'drive', fileId: r.fileId, tok: r.tok } });
-    return;
-  }
   send({ type: 'setMedia', media: v });
   $('results').innerHTML = '';
   $('qInput').value = '';
@@ -517,7 +504,7 @@ $('chatForm').onsubmit = (e) => {
 
 function renderPresence(list) {
   $('presence').innerHTML = list
-    .map((p) => `<li>${p.host ? '👑 ' : ''}${escapeHtml(p.name)}${p.id === me ? ' <em>(ты)</em>' : ''}</li>`)
+    .map((p) => `<li>${p.host ? '👑 ' : ''}${escapeHtml(p.name)}${p.voice ? ' 🎤' : ''}${p.id === me ? ' <em>(ты)</em>' : ''}</li>`)
     .join('');
 }
 

@@ -56,8 +56,8 @@ header {
 
 .room-info { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
 
-/* Единые пилюли в шапке: имя, комната, кнопки, Google-чип */
-#roomLabel, #nameInput, #copyLink, #leaveRoom, #gauth {
+/* Единые пилюли в шапке: имя, комната, кнопки */
+#roomLabel, #nameInput, #copyLink, #leaveRoom, #micBtn {
   height: 40px;
   padding: 0 16px;
   border: 1px solid var(--border);
@@ -75,8 +75,10 @@ header {
 }
 #roomLabel { color: var(--muted); }
 #nameInput { width: 150px; outline: none; }
-#nameInput:focus, #copyLink:hover, #leaveRoom:hover, #gauth:hover { border-color: var(--accent); }
-#copyLink:hover, #leaveRoom:hover, #gauth:hover { transform: none; box-shadow: none; }
+#nameInput:focus, #copyLink:hover, #leaveRoom:hover, #micBtn:hover { border-color: var(--accent); }
+#copyLink:hover, #leaveRoom:hover, #micBtn:hover { transform: none; box-shadow: none; }
+#micBtn { cursor: pointer; }
+#micBtn.on { border-color: #3ddc84; color: #3ddc84; box-shadow: 0 0 0 1px rgba(61, 220, 132, 0.4), 0 0 16px rgba(61, 220, 132, 0.35); }
 
 button {
   background: var(--grad);
@@ -98,8 +100,6 @@ button.ghost {
   color: var(--text);
   backdrop-filter: blur(8px);
 }
-#gauth { text-decoration: none; }
-.gdot { width: 8px; height: 8px; border-radius: 50%; background: #3ddc84; box-shadow: 0 0 8px rgba(61, 220, 132, 0.8); flex-shrink: 0; }
 button.ghost:hover { box-shadow: none; border-color: var(--accent); }
 
 main {
@@ -126,9 +126,8 @@ main {
   box-shadow: var(--shadow);
 }
 #player, #player iframe { position: absolute; inset: 0; width: 100%; height: 100%; }
-#vkBox, #driveBox { position: absolute; inset: 0; }
-#vkBox iframe, #driveBox iframe { width: 100%; height: 100%; border: 0; display: block; }
-#driveBox video { width: 100%; height: 100%; display: block; background: #000; }
+#vkBox { position: absolute; inset: 0; }
+#vkBox iframe { width: 100%; height: 100%; border: 0; display: block; }
 #placeholder {
   position: absolute; inset: 0;
   display: flex; flex-direction: column; gap: 10px;

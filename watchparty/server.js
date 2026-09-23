@@ -28,13 +28,6 @@ function serverless() {
   return http.createServer((req, res) => {
     const url = new URL(req.url, `http://${req.headers.host}`);
     if (url.pathname === '/search') return handleSearch(url, res);
-    if (url.pathname === '/auth/google') return handleAuthStart(req, res);
-    if (url.pathname === '/callback') return handleAuthCallback(req, res);
-    if (url.pathname === '/api/me') return handleMe(req, res);
-    if (url.pathname === '/api/logout') return handleLogout(req, res);
-    if (url.pathname === '/api/drive/videos') return handleDriveVideos(req, res);
-    if (url.pathname === '/api/drive/open' && req.method === 'POST') return handleDriveOpen(req, res);
-    if (url.pathname.startsWith('/api/drive/media/')) return handleDriveMedia(req, res);
     let file = url.pathname === '/' ? '/index.html' : url.pathname;
     const full = path.join(PUBLIC_DIR, path.normalize(file));
     if (!full.startsWith(PUBLIC_DIR)) {
@@ -117,239 +110,6 @@ async function handleSearch(url, res) {
   }
 }
 
-// ---------- Google: вход + Drive ----------
-const gSessions = new Map(); // sid -> { token, exp, email, name }
-
-function parseCookies(req) {
-  const out = {};
-  for (const part of String(req.headers.cookie || '').split(';')) {
-    const i = part.indexOf('=');
-    if (i > 0) out[part.slice(0, i).trim()] = decodeURIComponent(part.slice(i + 1).trim());
-  }
-  return out;
-}
-
-function redirect(res, loc) {
-  res.writeHead(302, { Location: loc });
-  res.end();
-}
-
-function jsonRes(res, code, obj) {
-  res.writeHead(code, { 'Content-Type': 'application/json; charset=utf-8' });
-  res.end(JSON.stringify(obj));
-}
-
-function proto(req) {
-  const xf = String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim();
-  return xf === 'https' ? 'https' : 'http';
-}
-
-function redirectUri(req) {
-  return `${proto(req)}://${req.headers.host}/callback`;
-}
-
-function handleAuthStart(req, res) {
-  const id = process.env.GOOGLE_CLIENT_ID;
-  const secret = process.env.GOOGLE_CLIENT_SECRET;
-  if (!id || !secret) {
-    return jsonRes(res, 400, { error: 'В .env не заданы GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET' });
-  }
-  const state = crypto.randomBytes(12).toString('hex');
-  const ret = String(new URL(req.url, `http://${req.headers.host}`).searchParams.get('r') || '');
-  const u = new URL('https://accounts.google.com/o/oauth2/v2/auth');
-  u.searchParams.set('client_id', id);
-  u.searchParams.set('redirect_uri', redirectUri(req));
-  u.searchParams.set('response_type', 'code');
-  u.searchParams.set('scope', 'openid email https://www.googleapis.com/auth/drive');
-  u.searchParams.set('state', state);
-  u.searchParams.set('prompt', 'consent');
-  const secure = proto(req) === 'https' ? '; Secure' : '';
-  res.setHeader('Set-Cookie', [
-    `wp_gs=${state}; Path=/; Max-Age=600; HttpOnly; SameSite=Lax${secure}`,
-    /^[A-Za-z0-9_-]{1,64}$/.test(ret) ? `wp_ret=${ret}; Path=/; Max-Age=600; HttpOnly; SameSite=Lax${secure}` : 'wp_ret=; Path=/; Max-Age=0',
-  ]);
-  redirect(res, u.toString());
-}
-
-async function handleAuthCallback(req, res) {
-  try {
-    const url = new URL(req.url, `http://${req.headers.host}`);
-    const code = url.searchParams.get('code');
-    const state = url.searchParams.get('state');
-    const cookies = parseCookies(req);
-    if (!code || !state || !cookies.wp_gs || cookies.wp_gs !== state) return redirect(res, '/?auth_error=state');
-    const r = await fetch('https://oauth2.googleapis.com/token', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({
-        code,
-        client_id: process.env.GOOGLE_CLIENT_ID,
-        client_secret: process.env.GOOGLE_CLIENT_SECRET,
-        redirect_uri: redirectUri(req),
-        grant_type: 'authorization_code',
-      }),
-    });
-    const j = await r.json();
-    if (!j.access_token) return redirect(res, '/?auth_error=' + encodeURIComponent(j.error || 'token'));
-    let ui = {};
-    try {
-      ui = await (
-        await fetch('https://openidconnect.googleapis.com/v1/userinfo', {
-          headers: { Authorization: `Bearer ${j.access_token}` },
-        })
-      ).json();
-    } catch {}
-    const sid = crypto.randomBytes(16).toString('hex');
-    gSessions.set(sid, {
-      token: j.access_token,
-      exp: Date.now() + ((j.expires_in || 3000) - 60) * 1000,
-      email: ui.email || '',
-      name: ui.name || '',
-    });
-    res.setHeader('Set-Cookie', `wp_sid=${sid}; Path=/; HttpOnly; SameSite=Lax${proto(req) === 'https' ? '; Secure' : ''}`);
-    const back = /^[A-Za-z0-9_-]{1,64}$/.test(cookies.wp_ret || '') ? `/?room=${cookies.wp_ret}` : '/';
-    redirect(res, back);
-  } catch (e) {
-    redirect(res, '/?auth_error=server');
-  }
-}
-
-function driveSession(req) {
-  const sid = parseCookies(req).wp_sid;
-  const s = sid && gSessions.get(sid);
-  if (!s || s.exp < Date.now()) return null;
-  return s;
-}
-
-function handleMe(req, res) {
-  const s = driveSession(req);
-  jsonRes(res, 200, s ? { user: { email: s.email, name: s.name } } : { user: null });
-}
-
-function handleLogout(req, res) {
-  const sid = parseCookies(req).wp_sid;
-  if (sid) gSessions.delete(sid);
-  res.setHeader('Set-Cookie', 'wp_sid=; Path=/; Max-Age=0');
-  jsonRes(res, 200, { ok: true });
-}
-
-async function readBody(req) {
-  let raw = '';
-  for await (const c of req) raw += c;
-  if (raw.length > 10_000) throw new Error('body too large');
-  return JSON.parse(raw || '{}');
-}
-
-async function handleDriveVideos(req, res) {
-  const s = driveSession(req);
-  if (!s) return jsonRes(res, 200, { results: [], error: 'Нужно войти через Google (кнопка сверху)' });
-  const url = new URL(req.url, `http://${req.headers.host}`);
-  const q = (url.searchParams.get('q') || '').trim().slice(0, 80);
-  const parts = ["trashed = false", "mimeType contains 'video/'"];
-  if (q) parts.push(`name contains '${q.replace(/[\\'"]/g, '').trim()}'`);
-  try {
-    const search = parts.join(' and ');
-    const u = new URL('https://www.googleapis.com/drive/v3/files');
-    u.searchParams.set('q', search);
-    u.searchParams.set('orderBy', 'modifiedTime desc');
-    u.searchParams.set('pageSize', '25');
-    u.searchParams.set('fields', 'files(id,name,mimeType,size,modifiedTime)');
-    const r = await fetch(u, { headers: { Authorization: `Bearer ${s.token}` } });
-    const j = await r.json();
-    if (j.error) return jsonRes(res, 200, { results: [], error: `Drive API: ${j.error.message}` });
-    jsonRes(res, 200, {
-      results: (j.files || []).map((f) => ({
-        kind: 'drive',
-        fileId: f.id,
-        title: f.name,
-        thumb: `https://drive.google.com/thumbnail?id=${f.id}&sz=w320`,
-        channel: 'Google Диск',
-        dur: f.size ? `${Math.round(Number(f.size) / 1e6)} МБ` : '',
-      })),
-    });
-  } catch (e) {
-    jsonRes(res, 200, { results: [], error: String((e && e.message) || e) });
-  }
-}
-
-async function handleDriveOpen(req, res) {
-  const s = driveSession(req);
-  if (!s) return jsonRes(res, 200, { ok: false, error: 'Нужно войти через Google' });
-  let fileId;
-  try {
-    fileId = String((await readBody(req)).fileId || '');
-  } catch {
-    return jsonRes(res, 400, { ok: false, error: 'bad json' });
-  }
-  if (!/^[\w-]{10,200}$/.test(fileId)) return jsonRes(res, 200, { ok: false, error: 'плохой fileId' });
-  try {
-    const r = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}/permissions`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${s.token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ role: 'reader', type: 'anyone' }),
-    });
-    const j = await r.json();
-    if (j.error) return jsonRes(res, 200, { ok: false, error: `Drive API: ${j.error.message}` });
-    jsonRes(res, 200, { ok: true, fileId, tok: streamTok(fileId) });
-  } catch (e) {
-    jsonRes(res, 200, { ok: false, error: String((e && e.message) || e) });
-  }
-}
-
-// ---------- Drive streaming proxy (гости смотрят через <video>, без своего Google-логина) ----------
-const STREAM_SECRET = crypto.randomBytes(16);
-function streamTok(fid) {
-  return crypto.createHmac('sha256', STREAM_SECRET).update(fid).digest('hex').slice(0, 32);
-}
-
-async function handleDriveMedia(req, res) {
-  const url = new URL(req.url, `http://${req.headers.host}`);
-  const fid = url.pathname.slice('/api/drive/media/'.length);
-  if (!/^[\w-]{10,200}$/.test(fid)) {
-    res.writeHead(400);
-    return res.end('bad fileId');
-  }
-  const want = streamTok(fid);
-  const got = String(url.searchParams.get('tok') || '');
-  if (got.length !== want.length || !crypto.timingSafeEqual(Buffer.from(got), Buffer.from(want))) {
-    res.writeHead(403);
-    return res.end('bad token');
-  }
-  const s = driveSession(req) || [...gSessions.values()].find((x) => x.exp > Date.now());
-  if (!s) {
-    console.error('[drive] нет живой Google-сессии для', fid);
-    res.writeHead(503);
-    return res.end('хосту нужно заново войти через Google');
-  }
-  try {
-    const headers = { Authorization: `Bearer ${s.token}` };
-    if (req.headers.range) headers.Range = req.headers.range;
-    const up = await fetch(`https://www.googleapis.com/drive/v3/files/${fid}?alt=media&supportsAllDrives=true`, { headers });
-    if (!up.ok && up.status !== 206) console.error('[drive] upstream', up.status, fid);
-    if (!up.ok && up.status === 401) {
-      gSessions.delete(parseCookies(req).wp_sid);
-      res.writeHead(502);
-      return res.end('Google-сессия истекла — войди заново');
-    }
-    const h = { 'Content-Type': up.headers.get('content-type') || 'video/mp4', 'Accept-Ranges': 'bytes' };
-    for (const k of ['content-length', 'content-range']) {
-      const v = up.headers.get(k);
-      if (v) h[k[0].toUpperCase() + k.slice(1)] = v;
-    }
-    res.writeHead(up.status, h);
-    const reader = up.body.getReader();
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      if (!res.write(value)) await new Promise((r) => res.once('drain', r));
-    }
-    res.end();
-  } catch (e) {
-    if (!res.headersSent) res.writeHead(502);
-    res.end('ошибка загрузки из Drive: ' + String((e && e.message) || e));
-  }
-}
-
 // room id -> { clients: Map<ws, member>, media, state, chat }
 const rooms = new Map();
 
@@ -379,7 +139,7 @@ function send(ws, msg) {
 }
 
 function presence(room) {
-  return [...room.clients.values()].map((m) => ({ id: m.id, name: m.name, host: m.host }));
+  return [...room.clients.values()].map((m) => ({ id: m.id, name: m.name, host: m.host, voice: !!m.voice }));
 }
 
 const wss = new WebSocketServer({ server, path: '/ws' });
@@ -388,13 +148,36 @@ wss.on('connection', (ws, req) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
   const roomId = (url.searchParams.get('room') || '').slice(0, 64);
   const name = (url.searchParams.get('name') || 'Гость').slice(0, 32);
+  const cid = (url.searchParams.get('cid') || '').slice(0, 64);
   if (!roomId) return ws.close();
 
   const room = getRoom(roomId);
   const id = crypto.randomBytes(6).toString('hex');
-  const isHost = room.clients.size === 0;
-  const member = { id, name, host: isHost };
+
+  // эта же вкладка после refresh/переподключения — забираем её старого «призрака» и его хостство
+  let tookOverHost = false;
+  if (cid) {
+    for (const [oldWs, old] of room.clients) {
+      if (old.cid === cid) {
+        if (old.host) tookOverHost = true;
+        old.gone = true;
+        old.host = false;
+        room.clients.delete(oldWs);
+        try {
+          oldWs.close(1000, 'replaced');
+        } catch {}
+        break;
+      }
+    }
+  }
+
+  const isHost = tookOverHost || room.clients.size === 0;
+  const member = { id, name, cid, host: isHost, voice: false };
   room.clients.set(ws, member);
+  ws.isAlive = true;
+  ws.on('pong', () => {
+    ws.isAlive = true;
+  });
 
   send(ws, {
     type: 'hello',
@@ -416,6 +199,7 @@ wss.on('connection', (ws, req) => {
     handleMessage(room, member, ws, msg);
   });
   ws.on('close', () => {
+    if (member.gone) return; // его уже заменило новое соединение этой же вкладки
     room.clients.delete(ws);
     if (member.host) {
       const next = room.clients.values().next().value;
@@ -428,6 +212,24 @@ wss.on('connection', (ws, req) => {
     if (room.clients.size === 0) rooms.delete(roomId);
   });
 });
+
+// «призраки» (закрытые браузеры без корректного close) вычищаются за ~20 секунд
+setInterval(() => {
+  for (const room of rooms.values()) {
+    for (const [ws] of room.clients) {
+      if (!ws.isAlive) {
+        try {
+          ws.terminate();
+        } catch {}
+        continue;
+      }
+      ws.isAlive = false;
+      try {
+        ws.ping();
+      } catch {}
+    }
+  }
+}, 10000).unref();
 
 function projectedState(room) {
   const s = room.state;
@@ -463,6 +265,21 @@ function handleMessage(room, member, ws, msg) {
       broadcast(room, { type: 'state', state: room.state }, ws);
       break;
     }
+    case 'voice': {
+      member.voice = !!msg.on;
+      broadcast(room, { type: 'presence', presence: presence(room) });
+      break;
+    }
+    case 'signal': {
+      // WebRTC-рукопожатие: ретранслируем SDP/ICE адресату в комнате, ничего не разбирая
+      const to = String(msg.to || '');
+      const data = msg.data;
+      if (!to || !data || typeof data !== 'object') return;
+      for (const [ws2, m2] of room.clients) {
+        if (m2.id === to) return send(ws2, { type: 'signal', from: member.id, data });
+      }
+      break;
+    }
   }
 }
 
@@ -474,11 +291,6 @@ function sanitizeMedia(m) {
   if (m.kind === 'vk' && Number.isFinite(Number(m.oid)) && Number.isFinite(Number(m.id)) && Number(m.id) > 0) {
     return { kind: 'vk', oid: Number(m.oid), id: Number(m.id) };
   }
-  if (m.kind === 'drive' && /^[\w-]{10,200}$/.test(String(m.fileId || ''))) {
-    const out = { kind: 'drive', fileId: m.fileId };
-    if (/^[0-9a-f]{32}$/.test(String(m.tok || ''))) out.tok = m.tok;
-    return out;
-  }
   return null;
 }
 
@@ -489,10 +301,6 @@ function parseMedia(url) {
   if (yt) return { kind: 'youtube', videoId: yt[1] || yt[0] };
   const vk = url.match(/(?:vk\.com|vkvideo\.ru)\/(?:#|video|clip)(-?\d+)_(\d+)/);
   if (vk) return { kind: 'vk', oid: Number(vk[1]), id: Number(vk[2]) };
-  const drive =
-    url.match(/drive\.google\.com\/file\/d\/([\w-]+)/) ||
-    url.match(/drive\.google\.com\/(?:open|uc|thumbnail)\?id=([\w-]+)/);
-  if (drive) return { kind: 'drive', fileId: drive[1] };
   return null;
 }
 

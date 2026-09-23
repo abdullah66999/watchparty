@@ -27,9 +27,9 @@
       <div class="room-info">
         <input id="nameInput" placeholder="Твоё имя" maxlength="32" />
         <span id="roomLabel"></span>
+        <button id="micBtn" class="ghost" title="Включить микрофон">🎙 Микрофон</button>
         <button id="copyLink" class="ghost">Скопировать ссылку</button>
         <button id="leaveRoom" class="ghost">Выйти</button>
-        <a id="gauth" class="ghost" href="/auth/google">Войти через Google</a>
       </div>
     </header>
 
@@ -44,16 +44,12 @@
               allowfullscreen
             ></iframe>
           </div>
-          <div id="driveBox" class="hidden">
-            <video id="driveVideo" controls playsinline></video>
-          </div>
           <div id="placeholder">Найди видео через поиск или вставь ссылку</div>
         </div>
         <div id="searchPanel">
           <div class="tabs">
             <button data-p="youtube" class="active">YouTube</button>
             <button data-p="vk">VK Видео</button>
-            <button data-p="drive">Мой Диск</button>
           </div>
           <div id="searchRow">
             <input id="qInput" type="text" placeholder="Название фильма, клипа, шоу…" maxlength="100" />
@@ -64,7 +60,7 @@
         <details id="linkDetails">
           <summary>…или вставь ссылку</summary>
           <div id="mediaBar">
-            <input id="urlInput" type="text" placeholder="YouTube / VK Video / Google Drive (file/d/...) — ссылка на фильм" />
+            <input id="urlInput" type="text" placeholder="YouTube или VK Видео — ссылка на фильм/клип" />
             <button id="setUrl">Показать всем</button>
           </div>
         </details>
