@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>WatchParty — смотри вместе</title>
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body>
+    <div id="lobby" class="hidden">
+      <div class="lobby-card">
+        <div class="lobby-logo">WatchParty</div>
+        <p class="lobby-sub">Смотрите видео вместе — синхронно, с чатом и общим пультом</p>
+        <input id="lobbyName" type="text" placeholder="Твоё имя" maxlength="32" />
+        <button id="createRoom">🚀 Создать комнату</button>
+        <div class="lobby-or"><span>или войди по коду</span></div>
+        <div class="lobby-join">
+          <input id="joinCode" type="text" placeholder="Код комнаты" maxlength="8" autocapitalize="characters" autocomplete="off" />
+          <button id="joinRoom" class="ghost">Войти</button>
+        </div>
+        <div id="lobbyHint"></div>
+      </div>
+    </div>
+
+    <header>
+      <div class="logo">WatchParty</div>
+      <div class="room-info">
+        <input id="nameInput" placeholder="Твоё имя" maxlength="32" />
+        <span id="roomLabel"></span>
+        <button id="copyLink" class="ghost">Скопировать ссылку</button>
+        <button id="leaveRoom" class="ghost">Выйти</button>
+        <a id="gauth" class="ghost" href="/auth/google">Войти через Google</a>
+      </div>
+    </header>
+
+    <main>
+      <section class="player-col">
+        <div id="playerBox">
+          <div id="player" class="hidden"></div>
+          <div id="vkBox" class="hidden">
+            <iframe
+              id="vkFrame"
+              allow="autoplay; fullscreen; encrypted-media; picture-in-picture"
+              allowfullscreen
+            ></iframe>
+          </div>
+          <div id="driveBox" class="hidden">
+            <video id="driveVideo" controls playsinline></video>
+          </div>
+          <div id="placeholder">Найди видео через поиск или вставь ссылку</div>
+        </div>
+        <div id="searchPanel">
+          <div class="tabs">
+            <button data-p="youtube" class="active">YouTube</button>
+            <button data-p="vk">VK Видео</button>
+            <button data-p="drive">Мой Диск</button>
+          </div>
+          <div id="searchRow">
+            <input id="qInput" type="text" placeholder="Название фильма, клипа, шоу…" maxlength="100" />
+            <button id="searchBtn">Поиск</button>
+          </div>
+          <div id="results"></div>
+        </div>
+        <details id="linkDetails">
+          <summary>…или вставь ссылку</summary>
+          <div id="mediaBar">
+            <input id="urlInput" type="text" placeholder="YouTube / VK Video / Google Drive (file/d/...) — ссылка на фильм" />
+            <button id="setUrl">Показать всем</button>
+          </div>
+        </details>
+        <div id="statusRow">
+          <span id="youRole" class="badge"></span>
+          <span id="syncStatus"></span>
+        </div>
+      </section>
+
+      <aside class="side-col">
+        <h3>В комнате</h3>
+        <ul id="presence"></ul>
+        <h3>Чат</h3>
+        <div id="chat"></div>
+        <form id="chatForm">
+          <input id="chatInput" type="text" placeholder="Сообщение…" maxlength="500" autocomplete="off" />
+          <button>➤</button>
+        </form>
+      </aside>
+    </main>
+
+    <script>
+      window.addEventListener('load', function () {
+        var s = document.createElement('script');
+        s.src = 'https://www.youtube.com/iframe_api';
+        document.head.appendChild(s);
+      });
+    </script>
+    <script src="/app.js"></script>
+  </body>
+</html>
