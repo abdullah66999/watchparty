@@ -252,29 +252,26 @@ input::placeholder { color: #6b7189; }
   margin: 12px 0 8px;
 }
 
-.chat-head { display: flex; align-items: center; gap: 10px; }
-.chat-head h3 { margin: 12px 0 8px; }
-
-/* Микрофон — маленькая круглая кнопка как в мессенджерах, рядом с чатом */
-#micBtn {
-  width: 36px;
-  height: 36px;
+/* Микрофон — в строке чата, тем же синим градиентом, что и кнопка отправки */
+#chatForm #micBtn {
+  height: 40px;
+  width: 44px;
   padding: 0;
-  border: 1px solid var(--border);
-  border-radius: 50%;
-  background: var(--panel);
-  color: var(--text);
-  font-size: 15px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--grad);
+  color: #fff;
+  font-size: 16px;
   line-height: 1;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  backdrop-filter: blur(8px);
-  transition: border-color 0.2s, box-shadow 0.2s, color 0.2s;
+  flex-shrink: 0;
+  transition: transform 0.15s, box-shadow 0.2s, filter 0.2s;
 }
-#micBtn:hover { transform: none; box-shadow: none; border-color: var(--accent); }
-#micBtn.on { color: #3ddc84; border-color: #3ddc84; box-shadow: 0 0 0 1px rgba(61, 220, 132, 0.4), 0 0 16px rgba(61, 220, 132, 0.35); }
+#chatForm #micBtn:hover { transform: translateY(-1px); box-shadow: 0 6px 24px rgba(124, 108, 255, 0.4); }
+#chatForm #micBtn.on { box-shadow: 0 0 0 2px rgba(61, 220, 132, 0.7), 0 0 16px rgba(61, 220, 132, 0.5); }
 
 #presence { list-style: none; font-size: 14px; max-height: 120px; overflow: auto; display: flex; flex-direction: column; gap: 4px; }
 #presence li {

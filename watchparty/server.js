@@ -28,6 +28,7 @@ function serverless() {
   return http.createServer((req, res) => {
     const url = new URL(req.url, `http://${req.headers.host}`);
     if (url.pathname === '/search') return handleSearch(url, res);
+    if (url.pathname === '/vk/play') return handleVkPlay(url, res);
     let file = url.pathname === '/' ? '/index.html' : url.pathname;
     const full = path.join(PUBLIC_DIR, path.normalize(file));
     if (!full.startsWith(PUBLIC_DIR)) {
@@ -52,6 +53,38 @@ function walk(node, cb) {
   }
 }
 
+// Плеер из video.get про авторизованную сессию: в замерах 7 минут фильма он шёл без вставок,
+// анонимный embed рекламит чаще. Это не гарантия — ad-машина в app.js прикрывает и такой случай.
+// hash/api_hash живут ~30 минут, поэтому держим кэш чуть меньше.
+const vkPlayerCache = new Map();
+async function handleVkPlay(url, res) {
+  const oid = Number(url.searchParams.get('oid'));
+  const id = Number(url.searchParams.get('id'));
+  res.setHeader('Content-Type', 'application/json; charset=utf-8');
+  if (!Number.isInteger(oid) || !Number.isInteger(id)) return res.end(JSON.stringify({ error: 'Нужны oid и id' }));
+  if (!process.env.VK_TOKEN) return res.end(JSON.stringify({ error: 'Нет VK_TOKEN' }));
+  const key = `${oid}_${id}`;
+  const hit = vkPlayerCache.get(key);
+  if (hit && Date.now() - hit.at < 20 * 60 * 1000) return res.end(JSON.stringify(hit.body));
+  try {
+    const r = await fetch(`https://api.vk.com/method/video.get?videos=${key}&access_token=${process.env.VK_TOKEN}&v=5.135`);
+    const j = await r.json();
+    const v = j.response && j.response.items && j.response.items[0];
+    if (j.error || !v || !v.player) {
+      return res.end(JSON.stringify({ error: j.error ? `VK API: ${j.error.error_msg}` : 'VK API не дал плеер' }));
+    }
+    // наружу отдаём только публичное: токен владельца не должен работать ключом к его личным видео
+    if (Array.isArray(v.privacy) && v.privacy.length && !v.privacy.includes('all')) {
+      return res.end(JSON.stringify({ error: 'Видео не публичное' }));
+    }
+    const body = { player: v.player, duration: v.duration || 0, title: v.title || '' };
+    vkPlayerCache.set(key, { at: Date.now(), body });
+    res.end(JSON.stringify(body));
+  } catch (e) {
+    res.end(JSON.stringify({ error: 'VK API недоступен: ' + e.message }));
+  }
+}
+
 async function handleSearch(url, res) {
   const q = (url.searchParams.get('q') || '').trim().slice(0, 100);
   const provider = url.searchParams.get('provider') || 'youtube';
@@ -60,7 +93,7 @@ async function handleSearch(url, res) {
   try {
     if (provider === 'vk') {
       if (!process.env.VK_TOKEN) {
-        return res.end(JSON.stringify({ results: [], error: 'Поиск по VK Видео требует токен сообщества (VK_TOKEN). Пока можно вставить ссылку вручную.' }));
+        return res.end(JSON.stringify({ results: [], error: 'Поиск по VK Видео требует пользовательский VK_TOKEN. Пока можно вставить ссылку вручную.' }));
       }
       const r = await fetch(
         `https://api.vk.com/method/video.search?q=${encodeURIComponent(q)}&count=15&access_token=${process.env.VK_TOKEN}&v=5.135`

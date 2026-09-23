@@ -303,6 +303,20 @@ function hideAllPlayers() {
 
 let mediaToken = 0;
 
+// Плеер от VK API (по токену на сервере) в замерах крутил фильм без вставок, анонимный video_ext.php
+// рекламит чаще. Это не гарантия — на подстраховке ниже ad-машина.
+async function vkEmbedSrc(oid, id) {
+  const origin = encodeURIComponent(location.origin);
+  try {
+    const r = await fetch(`/vk/play?oid=${encodeURIComponent(oid)}&id=${encodeURIComponent(id)}`);
+    const j = await r.json();
+    if (j.player && /^https:\/\/(vk\.(com|ru)|vkvideo\.ru)\/video_ext\.php\?/.test(j.player)) {
+      return j.player + (j.player.includes('js_api=1') ? '' : `&js_api=1&origin=${origin}`);
+    }
+  } catch {}
+  return `https://vk.com/video_ext.php?oid=${oid}&id=${id}&hd=2&js_api=1&origin=${origin}`;
+}
+
 function loadMedia(media, state) {
   currentVideo = media;
   const token = ++mediaToken;
@@ -321,10 +335,14 @@ function loadMedia(media, state) {
     vkTime = 0;
     vkPlaying = false;
     vkAd = false;
+    vkAdUntil = 0;
     vkDuration = 0;
-    $('vkFrame').src = `https://vk.com/video_ext.php?oid=${media.oid}&id=${media.id}&hd=2&js_api=1&origin=${encodeURIComponent(location.origin)}`;
-    // хост сам решает, когда жать ▶; зрителю подставляем состояние комнаты, когда iframe поднялся
-    setTimeout(() => token === mediaToken && !isHost && state && applyState(state), 1500);
+    vkEmbedSrc(media.oid, media.id).then((src) => {
+      if (token !== mediaToken) return; // к тому моменту уже поставили другое видео
+      $('vkFrame').src = src;
+      // хост сам решает, когда жать ▶; зрителю подставляем состояние комнаты, когда iframe поднялся
+      setTimeout(() => token === mediaToken && !isHost && state && applyState(state), 1500);
+    });
     return;
   }
   hideAllPlayers();
@@ -350,6 +368,7 @@ let vkTime = 0;
 let vkPlaying = false;
 let vkDuration = 0;
 let vkAd = false;
+let vkAdUntil = 0; // реклама «подозревается» до этого момента — флаг обязан самогаситься
 let lastSeekAt = 0;
 let stuckTicks = 0;
 
@@ -362,26 +381,64 @@ function vkCommand(method, value) {
   f.contentWindow.postMessage(msg, '*');
 }
 
+function vkAdStart(reason, adDur) {
+  if (!vkAd) console.log('VK: рекламная вставка — комната ждёт', reason);
+  vkAd = true;
+  // окно самогашения: сама реклама + запас, но не меньше 25 с и не больше 90 с —
+  // длинный ролик не должен «протечь» в время фильма, а застрявший флаг не держит комнату вечно
+  vkAdUntil = Date.now() + Math.min(90000, Math.max(25000, (adDur > 0 ? adDur : 0) * 1000 + 15000));
+  vkPlaying = false; // фильм на рекламе стоит — все должны стоять
+  if (isHost) reportState();
+}
+
+function vkAdEnd(reason) {
+  if (!vkAd) return;
+  vkAd = false;
+  vkAdUntil = 0;
+  console.log('VK: реклама кончилась', reason);
+  // закрывающим событием часто является timeupdate уже вернувшегося фильма, который ещё
+  // не обновил vkTime/vkPlaying в этом обработчике — рапортуем следующим тиком микрозадач
+  setTimeout(() => {
+    if (isHost) reportState();
+    else if (lastState) applyState(lastState); // догоняем фильм сразу, не ждём тика
+  }, 0);
+}
+
+// Длительность в событии совпадает с фильмом (а не с рекламным роликом)?
+function vkDurIsFilm(d) {
+  return typeof d.duration === 'number' && d.duration > 0 && vkDuration > 300 && Math.abs(d.duration - vkDuration) < 60;
+}
+
+const VK_ORIGINS = ['https://vk.com', 'https://vk.ru', 'https://vkvideo.ru'];
 window.addEventListener('message', (e) => {
-  if (!['https://vk.com', 'https://vk.ru'].includes(e.origin)) return;
+  if (!VK_ORIGINS.includes(e.origin)) return;
   if (!currentVideo || currentVideo.kind !== 'vk') return;
   const d = e.data;
   if (!d || typeof d !== 'object' || !d.event) return;
   const ev = d.event;
-  if (ev === 'adStarted') {
-    vkAd = true;
-    vkPlaying = false;
-    if (isHost) reportState();
-    return;
+  const now = Date.now();
+
+  if (ev === 'adStarted' || ev === 'adBreak') return vkAdStart(ev, vkDurIsFilm(d) ? 0 : d.duration);
+  if (ev === 'adCompleted' || ev === 'adEnd' || ev === 'adSkipped') return vkAdEnd(ev);
+
+  // adStarted приходит не всегда (у embed-плеера он под флагом send_ad_events),
+  // поэтому рекламу ещё определяем по её следам в самих событиях:
+  const shortForThisFilm = typeof d.duration === 'number' && d.duration > 0 && vkDuration > 300 && d.duration < Math.min(180, vkDuration / 4);
+  const timeJumpedBack = typeof d.time === 'number' && vkTime > 30 && d.time < vkTime - 25 && !vkDurIsFilm(d);
+  if (shortForThisFilm || timeJumpedBack) return vkAdStart(shortForThisFilm ? 'duration=' + d.duration : 'rollback=' + d.time, shortForThisFilm ? d.duration : 0);
+
+  if (vkAd) {
+    // фильм вернулся: длительность снова фильмовая, а время не уехало в другой конец
+    const filmBack = vkDurIsFilm(d) && (typeof d.time !== 'number' || Math.abs(d.time - vkTime) < 45);
+    if (now > vkAdUntil) vkAdEnd('timeout');
+    else if (filmBack) vkAdEnd('film');
+    else return; // время рекламного ролика — не время фильма
   }
-  if (ev === 'adCompleted' || ev === 'adBreak') {
-    vkAd = false;
-    if (isHost) reportState();
-    return;
+
+  if (typeof d.time === 'number' && (ev === 'seeked' || Math.abs(d.time - vkTime) < 30)) {
+    if (d.time > vkTime + 0.4) vkPlaying = true; // время пошло вперёд — фильм играет (после рекламы VK возобновляет его молча)
+    vkTime = d.time;
   }
-  if (typeof d.duration === 'number' && d.duration > 0 && d.duration < 120 && vkDuration > 300) vkAd = true;
-  if (vkAd) return; // время рекламной вставки — не время фильма
-  if (typeof d.time === 'number' && (ev === 'seeked' || Math.abs(d.time - vkTime) < 30)) vkTime = d.time;
   if (typeof d.duration === 'number' && d.duration > vkDuration) vkDuration = d.duration;
   if (ev === 'started' || ev === 'resumed') vkPlaying = true;
   if (ev === 'paused' || ev === 'ended') vkPlaying = false;
@@ -477,6 +534,7 @@ function applyState(state) {
 
 // host: heartbeat sync + guest drift check
 setInterval(() => {
+  if (currentVideo && currentVideo.kind === 'vk' && vkAd && Date.now() > vkAdUntil) vkAdEnd('heartbeat');
   if (isHost) reportState();
   else if (lastState) applyState(lastState);
 }, 2000);
