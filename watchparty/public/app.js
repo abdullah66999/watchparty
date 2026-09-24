@@ -94,11 +94,22 @@ if (!CID) {
 
 function connect() {
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-  ws = new WebSocket(
+  // предыдущий сокет (вкладка сменила комнату либо переподключилась) гасим полностью:
+  // иначе он остаётся «призраком» в старой комнате, а его onclose тайком пересоздаёт
+  // текущий ws — вкладка метает соединения и рвёт то плеер, то хостство
+  if (ws) {
+    const old = ws;
+    old.onclose = old.onmessage = null;
+    try {
+      old.close();
+    } catch {}
+  }
+  const sock = new WebSocket(
     `${proto}://${location.host}/ws?room=${encodeURIComponent(room)}&name=${encodeURIComponent(name)}&cid=${encodeURIComponent(CID)}`
   );
-  ws.onclose = () => !leaving && setTimeout(connect, 1500);
-  ws.onmessage = (e) => onMessage(JSON.parse(e.data));
+  ws = sock;
+  sock.onclose = () => ws === sock && !leaving && setTimeout(connect, 1500);
+  sock.onmessage = (e) => ws === sock && onMessage(JSON.parse(e.data));
 }
 
 function send(msg) {
