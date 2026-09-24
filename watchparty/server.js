@@ -269,6 +269,20 @@ function handleMessage(room, member, ws, msg) {
       broadcast(room, { type: 'state', state: room.state }, ws);
       break;
     }
+    case 'passHost': {
+      // «передать лидерку» как в Rave: хост сам выбирает, кто продолжает управлять.
+      // Состояние не обнуляем — новый хост подхватывает фильм с той же точки.
+      if (!member.host) return;
+      const to = String(msg.to || '');
+      const next = [...room.clients.values()].find((m) => m.id === to);
+      if (!next || next.host) return;
+      member.host = false;
+      next.host = true;
+      room.orphanHostCid = next.cid || null;
+      room.orphanAt = Date.now();
+      broadcast(room, { type: 'presence', presence: presence(room) });
+      break;
+    }
     case 'voice': {
       member.voice = !!msg.on;
       broadcast(room, { type: 'presence', presence: presence(room) });

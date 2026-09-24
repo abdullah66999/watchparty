@@ -303,13 +303,14 @@ function onMessage(msg) {
       break;
     }
     case 'presence':
-      renderPresence(msg.presence);
       syncVoicePeers(msg.presence);
       {
         const mine = msg.presence.find((p) => p.id === me);
+        // роль обновляем ДО отрисовки списка: на ней завязана кнопка «передать лидерку»
         if (mine) setHost(mine.host);
         else if (!msg.presence.some((p) => p.host)) setHost(true);
       }
+      renderPresence(msg.presence);
       break;
     case 'signal':
       handleSignal(msg.from, msg.data);
@@ -468,11 +469,14 @@ $('ytRetry').onclick = () => {
 };
 
 function setHost(v) {
+  const changed = isHost !== v;
   isHost = v;
   document.body.dataset.role = v ? 'host' : 'guest';
   $('qInput').placeholder = v ? 'Название или ссылка…' : 'Видео выбирает хост — просто смотри';
   $('searchHint').textContent = v ? 'Кликни по карточке — видео включится у всех. Можно вставить и ссылку.' : '';
   if (!v) hideHint();
+  // после смены роли список участников перерисовываем: у нового хоста появляются короны-кнопки
+  if (changed && lastPresence.length) renderPresence(lastPresence);
 }
 
 function hideAllPlayers() {
@@ -819,9 +823,15 @@ setInterval(() => {
 }, 2000);
 let lastState = null;
 const origOnMessage = onMessage;
+// Часы телефона и ноутбука расходятся на секунды и минуты — мобильные сети синхронизируют
+// время не так, как десктоп. Сервер ставит в state.at СВОЙ timestamp, а зритель вычитает из
+// него СВОЁ время: из этих часов получается фантомный дрейф, и зрителя навсегда уносит на
+// величину расхождения (на записи: телефон-хост и ноутбук-зритель в разных концах фильма).
+// Поэтому помечаем состояние местным временем приёма — тогда `Date.now() - at` это честное
+// «сколько секунд прошло с тех пор, как я это услышал», и часы сервера вообще не важны.
 onMessage = (msg) => {
-  if (msg.type === 'state') lastState = msg.state;
-  if (msg.type === 'hello') lastState = msg.state;
+  if (msg.state) msg.state = { ...msg.state, at: Date.now() };
+  if (msg.type === 'state' || msg.type === 'hello') lastState = msg.state;
   origOnMessage(msg);
 };
 
@@ -933,10 +943,27 @@ $('chatForm').onsubmit = (e) => {
   $('chatInput').value = '';
 };
 
+let lastPresence = []; // последний список участников — нужен, чтобы перерисовать его при смене роли
+
 function renderPresence(list) {
-  $('presence').innerHTML = list
-    .map((p) => `<li>${p.host ? '👑 ' : ''}${escapeHtml(p.name)}${p.voice ? ' 🎤' : ''}${p.id === me ? ' <em>(ты)</em>' : ''}</li>`)
+  lastPresence = list || [];
+  const canPass = isHost && lastPresence.length > 1;
+  $('presence').innerHTML = lastPresence
+    .map(
+      (p) =>
+        `<li data-id="${p.id}" data-name="${escapeHtml(p.name)}"><span>${p.host ? '👑 ' : ''}${escapeHtml(p.name)}${
+          p.voice ? ' 🎤' : ''
+        }${p.id === me ? ' <em>(ты)</em>' : ''}</span>${
+          canPass && !p.host ? '<button class="pass" title="Передать управление" aria-label="Передать управление">👑</button>' : ''
+        }</li>`
+    )
     .join('');
+  $('presence').querySelectorAll('.pass').forEach((b) => {
+    b.onclick = () => {
+      const name = b.closest('li').dataset.name;
+      if (confirm(`Передать управление ${name}? Ты станешь зрителем.`)) send({ type: 'passHost', to: b.closest('li').dataset.id });
+    };
+  });
 }
 
 function sameMedia(a, b) {

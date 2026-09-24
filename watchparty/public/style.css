@@ -326,10 +326,30 @@ input::placeholder { color: #6b7189; }
 
 #presence { list-style: none; font-size: 14px; max-height: 120px; overflow: auto; display: flex; flex-direction: column; gap: 4px; }
 #presence li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   padding: 6px 12px;
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.04);
   font-weight: 600;
+}
+#presence li .pass {
+  margin-left: auto;
+  width: 30px;
+  height: 26px;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0.7;
+  transition: 0.15s;
+}
+#presence li .pass:hover {
+  opacity: 1;
+  background: var(--grad);
 }
 #presence em { color: var(--muted); font-style: normal; font-weight: 500; }
 
