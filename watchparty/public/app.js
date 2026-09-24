@@ -336,6 +336,9 @@ window.onYouTubeIframeAPIReady = () => {
       },
       onStateChange: (e) => {
         if (+e.data === YT.PlayerState.PLAYING) clearYtBlock();
+        if (+e.data === YT.PlayerState.PLAYING && !mutedNow()) ytMutedStart = false; // звук включили
+        // PAUSED без нашей команды — это пользователь сам нажал паузу: больше не ждём запуска
+        if (+e.data === YT.PlayerState.PAUSED && !applyingRemote) wantPlay = false;
         if (isHost && !applyingRemote) reportState();
       },
     },
@@ -519,6 +522,7 @@ function loadMedia(media, state) {
   // пауза, а «видео только что выбрали». Настоящая пауза — когда время больше нуля (возврат
   // в комнату посреди остановленного фильма), её и восстанавливаем.
   const fresh = !state || (!state.playing && !state.time);
+  wantPlay = fresh || !!(state && state.playing);
   if (media.kind === 'vk') {
     if (playerReady) {
       try {
@@ -539,7 +543,7 @@ function loadMedia(media, state) {
       setTimeout(() => {
         if (token !== mediaToken) return;
         if (isHost) {
-          if (fresh) vkCommand('play');
+          if (fresh) playNow();
         } else if (!fresh) {
           applyState(state);
         }
@@ -554,6 +558,13 @@ function loadMedia(media, state) {
   // в «не запускался» и висит вечным спиннером — поэтому свежую карточку всегда запускаем.
   if (playerReady) {
     applyingRemote = true;
+    if (ytMutedStart) {
+      // эту сессию браузер пускает только без звука — новую карточку сразу запускаем тихо,
+      // иначе снова получим 4 секунды чёрного экрана перед подсказкой
+      try {
+        player.mute();
+      } catch {}
+    }
     if (fresh || state.playing) player.loadVideoById(media.videoId);
     else player.cueVideoById(media.videoId);
     setTimeout(() => {
@@ -582,6 +593,7 @@ let vkAd = false;
 let vkAdUntil = 0; // реклама «подозревается» до этого момента — флаг обязан самогаситься
 let lastSeekAt = 0;
 let stuckTicks = 0;
+let wantPlay = false; // мы хотели бы смотреть фильм; пауза по рукам пользователя сбрасывает это
 
 function vkCommand(method, value) {
   const f = $('vkFrame');
@@ -652,7 +664,10 @@ window.addEventListener('message', (e) => {
   }
   if (typeof d.duration === 'number' && d.duration > vkDuration) vkDuration = d.duration;
   if (ev === 'started' || ev === 'resumed') vkPlaying = true;
-  if (ev === 'paused' || ev === 'ended') vkPlaying = false;
+  if (ev === 'paused' || ev === 'ended') {
+    vkPlaying = false;
+    if (ev === 'paused' && !applyingRemote) wantPlay = false; // пользователь сам поставил на паузу
+  }
   if (isHost && !applyingRemote && ['started', 'resumed', 'paused', 'seeked', 'ended'].includes(ev)) reportState();
 });
 
@@ -689,6 +704,7 @@ function nowPlaying() {
 
 function playNow() {
   if (!currentVideo) return;
+  wantPlay = true;
   if (currentVideo.kind === 'vk') vkCommand('play');
   else if (playerReady) {
     try {
@@ -702,12 +718,6 @@ function hideHint() {
   const h = $('syncHint');
   if (h) h.classList.add('hidden');
 }
-
-$('syncHint').onclick = () => {
-  hideHint();
-  playNow();
-  if (lastState) applyState(lastState);
-};
 
 // Зритель: подтягиваемся к состоянию комнаты. Команды шлём только при реальном расхождении —
 // иначе каждые 2 секунды летит лишний play/pause/seek и плеер «заикается» на одном устройстве.
@@ -735,11 +745,58 @@ function applyState(state) {
     }
   }
 
-  if (state.playing && !nowPlaying()) {
-    if (++stuckTicks >= 3) $('syncHint').classList.remove('hidden');
-  } else {
+  if (!state.playing && nowPlaying()) wantPlay = false;
+}
+
+// Браузер вправе не запускать видео без участия зрителя, и playVideo() из обработчика своей
+// кнопки ему не помогает — активировать может только клик по самому плееру. Поэтому: сначала
+// честная попытка со звуком, затем тихий старт (фильм хотя бы идёт и синхронизируется), и
+// подсказка, куда нажать.
+let ytMutedStart = false;
+
+function mutedNow() {
+  try {
+    return !!player.isMuted();
+  } catch {
+    return false;
+  }
+}
+
+function checkBlockedStart() {
+  const h = $('syncHint');
+  const want = wantPlay || (!isHost && lastState && lastState.playing);
+  const adOnVk = currentVideo && currentVideo.kind === 'vk' && vkAd;
+  const youtube = currentVideo && currentVideo.kind !== 'vk';
+  if (!currentVideo || adOnVk || !want) {
     stuckTicks = 0;
-    $('syncHint').classList.add('hidden');
+    h.classList.add('hidden');
+    return;
+  }
+  if (youtube && ytMutedStart && nowPlaying() && mutedNow()) {
+    // фильм идёт, но тихо: снять мьют из кода нельзя — unMute() разрешают, но сразу ставят
+    // паузу. Звук включает только клик пользователя по самому плееру.
+    stuckTicks = 0;
+    h.textContent = '🔇 Фильм идёт без звука: нажми на значок 🔇 в самом плеере';
+    h.classList.remove('hidden');
+    return;
+  }
+  if (nowPlaying()) {
+    stuckTicks = 0;
+    h.classList.add('hidden');
+    return;
+  }
+  stuckTicks++;
+  if (youtube && !ytMutedStart && stuckTicks >= 2 && stuckTicks < 6) {
+    ytMutedStart = true;
+    try {
+      player.mute();
+      player.loadVideoById(currentVideo.videoId);
+    } catch {}
+    return;
+  }
+  if (stuckTicks >= 2) {
+    h.textContent = '▶ Нажми на ▶ в плеере — браузер не запускает видео сам';
+    h.classList.remove('hidden');
   }
 }
 
@@ -748,6 +805,7 @@ setInterval(() => {
   if (currentVideo && currentVideo.kind === 'vk' && vkAd && Date.now() > vkAdUntil) vkAdEnd('heartbeat');
   if (isHost) reportState();
   else if (lastState) applyState(lastState);
+  checkBlockedStart();
 }, 2000);
 let lastState = null;
 const origOnMessage = onMessage;

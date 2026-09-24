@@ -155,6 +155,8 @@ main {
 #syncHint {
   position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%);
   z-index: 3;
+  /* только надпись: клик пользователю нужно сделать по самому плееру, не по подсказке */
+  pointer-events: none;
   background: rgba(10, 10, 15, 0.82);
   border: 1px solid var(--accent);
   color: var(--text);
