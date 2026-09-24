@@ -495,26 +495,11 @@ async function getJson(url, ms) {
   }
 }
 
-// Плеер от VK API (по токену на сервере) в замерах крутил фильм без вставок, анонимный video_ext.php
-// рекламит чаще. Это не гарантия — на подстраховке ниже ad-машина.
-function vkSetParam(url, key, val) {
-  const re = new RegExp(`([?&])${key}=[^&]*`);
-  return re.test(url) ? url.replace(re, `$1${key}=${val}`) : `${url}${url.includes('?') ? '&' : '?'}${key}=${val}`;
-}
-
-async function vkEmbedSrc(oid, id) {
-  const origin = encodeURIComponent(location.origin);
-  let src;
-  try {
-    const j = await getJson(`/vk/play?oid=${encodeURIComponent(oid)}&id=${encodeURIComponent(id)}`, 8000);
-    src =
-      j.player && /^https:\/\/(vk\.(com|ru)|vkvideo\.ru)\/video_ext\.php\?/.test(j.player)
-        ? j.player + (j.player.includes('js_api=1') ? '' : `&js_api=1&origin=${origin}`)
-        : null;
-  } catch {}
-  if (!src) src = `https://vk.com/video_ext.php?oid=${oid}&id=${id}&hd=2&js_api=1&origin=${origin}`;
-  // карточку выбрали → фильм должен начаться, а не ждать ещё одного клика по плееру
-  return vkSetParam(src, 'autoplay', '1');
+function vkEmbedSrc(oid, id) {
+  // Анонимный embed: работает без токена и без запросов на сервер — VK сам отдаёт плеер по oid/id.
+  // Рекламные вставки прикрывает ad-машина ниже. autoplay=1 — карточка должна начаться сразу,
+  // а не ждать ещё одного клика по плееру.
+  return `https://vk.com/video_ext.php?oid=${oid}&id=${id}&hd=2&autoplay=1&js_api=1&origin=${encodeURIComponent(location.origin)}`;
 }
 
 function loadMedia(media, state) {
@@ -543,19 +528,18 @@ function loadMedia(media, state) {
     vkAd = false;
     vkAdUntil = 0;
     vkDuration = 0;
-    vkEmbedSrc(media.oid, media.id).then((src) => {
-      if (token !== mediaToken) return; // к тому моменту уже поставили другое видео
-      $('vkFrame').src = src;
-      // зрители догоняют комнату, когда iframe поднялся; хост на свежей карточке сам даёт старт
-      setTimeout(() => {
-        if (token !== mediaToken) return;
-        if (isHost) {
-          if (fresh) playNow();
-        } else if (!fresh) {
-          applyState(state);
-        }
-      }, 1500);
-    });
+    vkSeekTarget = -1;
+    vkSeekCalmUntil = 0;
+    $('vkFrame').src = vkEmbedSrc(media.oid, media.id);
+    // зрители догоняют комнату, когда iframe поднялся; хост на свежей карточке сам даёт старт
+    setTimeout(() => {
+      if (token !== mediaToken) return;
+      if (isHost) {
+        if (fresh) playNow();
+      } else if (!fresh) {
+        applyState(state);
+      }
+    }, 1500);
     return;
   }
   hideAllPlayers();
@@ -601,13 +585,25 @@ let vkAdUntil = 0; // реклама «подозревается» до это�
 let lastSeekAt = 0;
 let stuckTicks = 0;
 let wantPlay = false; // мы хотели бы смотреть фильм; пауза по рукам пользователя сбрасывает это
+// Дальная перемотка в анонимном VK-плеере догоняется несколько секунд. Пока плеер не доехал
+// до нужной точки, любая проверка расхождения видит «отстаём» и шлёт новый seek — плеер
+// мотается с точки на точку и не начинает играть. Это окно и закрывает такие попытки.
+let vkSeekTarget = -1;
+let vkSeekCalmUntil = 0; // до этого момента перемотку не повторяем
 
 function vkCommand(method, value) {
   const f = $('vkFrame');
   if (!f || !f.contentWindow) return;
   const msg = { method };
-  if (method === 'seek') msg.time = value || 0;
+  if (method === 'seek') {
+    msg.time = value || 0;
+    vkSeekTarget = msg.time;
+    vkSeekCalmUntil = Date.now() + 12000; // дальше плеер либо сам рапортуется о приезде, либо окно погаснет
+  }
   if (method === 'set_volume') msg.volume = value;
+  // «paused» от анонимного плеера приходит не всегда — иначе зритель стоит с vkPlaying=true и
+  // комната кажется рассинхронизированной. Команду-то мы отдали.
+  if (method === 'pause') vkPlaying = false;
   f.contentWindow.postMessage(msg, '*');
 }
 
@@ -666,6 +662,10 @@ window.addEventListener('message', (e) => {
   }
 
   if (typeof d.time === 'number' && (ev === 'seeked' || Math.abs(d.time - vkTime) < 30)) {
+    if (vkSeekCalmUntil && Math.abs(d.time - vkSeekTarget) < 5) {
+      vkSeekCalmUntil = 0; // домотали — можно снова следить за расхождением
+      vkSeekTarget = -1;
+    }
     if (d.time > vkTime + 0.4) vkPlaying = true; // время пошло вперёд — фильм играет (после рекламы VK возобновляет его молча)
     vkTime = d.time;
   }
@@ -732,15 +732,18 @@ function applyState(state) {
   if (!currentVideo || !state || isHost) return;
   if (document.hidden) return; // фоновая вкладка всё равно не играет — вернёмся на visibilitychange
   if (currentVideo.kind === 'vk' && vkAd) return; // время рекламы — не время фильма
+  // Перемотку плеер догоняет несколько секунд: в это окно не ищем заново и не restart-им старт,
+  // иначе зритель мотается по кругу и не начинает играть никогда.
+  const calm = currentVideo.kind === 'vk' && Date.now() < vkSeekCalmUntil;
   const expected = state.playing ? state.time + (Date.now() - state.at) / 1000 : state.time;
   const drift = Math.abs(currentVideo.kind === 'vk' ? vkTime - expected : playerTime() - expected);
 
-  if (state.playing && !nowPlaying()) playNow();
+  if (state.playing && !nowPlaying() && !calm) playNow();
   if (!state.playing && nowPlaying()) {
     if (currentVideo.kind === 'vk') vkCommand('pause');
     else if (playerReady) player.pauseVideo();
   }
-  if (drift > 2 && Date.now() - lastSeekAt > 4000) {
+  if (drift > 2 && !calm && Date.now() - lastSeekAt > 4000) {
     lastSeekAt = Date.now();
     if (currentVideo.kind === 'vk') {
       vkTime = expected; // не ждём события seeked: с ним VK иногда не отвечает и мы мотали каждые 2с
@@ -844,10 +847,13 @@ $('roomLabel').onclick = (e) => copyRoomLink(e.currentTarget);
 // ---------- Поиск в каталоге (как в Rave) ----------
 let provider = 'youtube';
 const LINK_RE = /(?:youtube\.com\/(?:watch\?v=|live\/|embed\/|shorts\/)|youtu\.be\/)[\w-]{11}|(?:vk\.com|vkvideo\.ru)\/(?:#|video|clip)-?\d+_\d+/;
+const PH_YT = 'Название фильма, клипа, шоу…';
+const PH_VK = 'Ссылка на ролик: vkvideo.ru/video-123456_789';
 
 document.querySelectorAll('.tabs button').forEach((b) => {
   b.onclick = () => {
     provider = b.dataset.p;
+    $('qInput').placeholder = provider === 'vk' ? PH_VK : PH_YT;
     document.querySelectorAll('.tabs button').forEach((x) => x.classList.toggle('active', x === b));
     if (LINK_RE.test($('qInput').value.trim())) return;
     if ($('qInput').value.trim() || $('results').children.length) doSearch(); // ищем сразу в этой вкладке
@@ -859,10 +865,7 @@ $('qInput').addEventListener('keydown', (e) => e.key === 'Enter' && doSearch());
 // «Искать в VK Видео» с подложки YouTube: та же строка, только другая вкладка
 $('ytVk').onclick = () => {
   const q = $('qInput');
-  if (LINK_RE.test(q.value.trim())) {
-    q.value = '';
-    q.placeholder = 'Название фильма, клипа, шоу…';
-  }
+  if (LINK_RE.test(q.value.trim())) q.value = '';
   const vkTab = document.querySelector('.tabs button[data-p="vk"]');
   if (vkTab) vkTab.click();
   $('searchPanel').scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -877,6 +880,12 @@ async function doSearch() {
     $('results').innerHTML = '';
     send({ type: 'setMedia', url: q }); // ссылка прямо в строке поиска
     $('qInput').value = '';
+    return;
+  }
+  // У VK-видео нет публичного поиска без пользовательского токена, и заводить токен ради
+  // вечеринки нечем: ролик находится в самом VK, а сюда попадает ссылкой.
+  if (provider === 'vk') {
+    $('results').innerHTML = `<div class="hint">Вставь ссылку на ролик из <b>vkvideo.ru</b> или <b>vk.com</b> — он запустится прямо в комнате. Искать по названию здесь не нужно.</div>`;
     return;
   }
   $('results').innerHTML = '<div class="hint">Ищу…</div>';

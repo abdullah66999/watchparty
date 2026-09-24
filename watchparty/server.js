@@ -28,7 +28,6 @@ function serverless() {
   return http.createServer((req, res) => {
     const url = new URL(req.url, `http://${req.headers.host}`);
     if (url.pathname === '/search') return handleSearch(url, res);
-    if (url.pathname === '/vk/play') return handleVkPlay(url, res);
     let file = url.pathname === '/' ? '/index.html' : url.pathname;
     const full = path.join(PUBLIC_DIR, path.normalize(file));
     if (!full.startsWith(PUBLIC_DIR)) {
@@ -53,38 +52,6 @@ function walk(node, cb) {
   }
 }
 
-// Плеер из video.get про авторизованную сессию: в замерах 7 минут фильма он шёл без вставок,
-// анонимный embed рекламит чаще. Это не гарантия — ad-машина в app.js прикрывает и такой случай.
-// hash/api_hash живут ~30 минут, поэтому держим кэш чуть меньше.
-const vkPlayerCache = new Map();
-async function handleVkPlay(url, res) {
-  const oid = Number(url.searchParams.get('oid'));
-  const id = Number(url.searchParams.get('id'));
-  res.setHeader('Content-Type', 'application/json; charset=utf-8');
-  if (!Number.isInteger(oid) || !Number.isInteger(id)) return res.end(JSON.stringify({ error: 'Нужны oid и id' }));
-  if (!process.env.VK_TOKEN) return res.end(JSON.stringify({ error: 'Нет VK_TOKEN' }));
-  const key = `${oid}_${id}`;
-  const hit = vkPlayerCache.get(key);
-  if (hit && Date.now() - hit.at < 20 * 60 * 1000) return res.end(JSON.stringify(hit.body));
-  try {
-    const r = await fetch(`https://api.vk.com/method/video.get?videos=${key}&access_token=${process.env.VK_TOKEN}&v=5.135`);
-    const j = await r.json();
-    const v = j.response && j.response.items && j.response.items[0];
-    if (j.error || !v || !v.player) {
-      return res.end(JSON.stringify({ error: j.error ? `VK API: ${j.error.error_msg}` : 'VK API не дал плеер' }));
-    }
-    // наружу отдаём только публичное: токен владельца не должен работать ключом к его личным видео
-    if (Array.isArray(v.privacy) && v.privacy.length && !v.privacy.includes('all')) {
-      return res.end(JSON.stringify({ error: 'Видео не публичное' }));
-    }
-    const body = { player: v.player, duration: v.duration || 0, title: v.title || '' };
-    vkPlayerCache.set(key, { at: Date.now(), body });
-    res.end(JSON.stringify(body));
-  } catch (e) {
-    res.end(JSON.stringify({ error: 'VK API недоступен: ' + e.message }));
-  }
-}
-
 async function handleSearch(url, res) {
   const q = (url.searchParams.get('q') || '').trim().slice(0, 100);
   const provider = url.searchParams.get('provider') || 'youtube';
@@ -92,35 +59,10 @@ async function handleSearch(url, res) {
   if (!q) return res.end(JSON.stringify({ results: [], error: 'Пустой запрос' }));
   try {
     if (provider === 'vk') {
-      if (!process.env.VK_TOKEN) {
-        return res.end(JSON.stringify({ results: [], error: 'Поиск по VK Видео не подключён: на сервере нет токена VK. Вставь ссылку на ролик — она открывается как есть.' }));
-      }
-      const r = await fetch(
-        `https://api.vk.com/method/video.search?q=${encodeURIComponent(q)}&count=15&access_token=${process.env.VK_TOKEN}&v=5.135`
-      );
-      const j = await r.json();
-      if (j.error) {
-        // 5 — токен нельзя использовать с чужого IP: браузерный OAuth-токен привязан к адресу,
-        // с которого его выдали (переиздается со scope=offline). Служебный текст VK пугает
-        // пользователя, поэтому наружу — человеческий.
-        const msg =
-          j.error.error_code === 5
-            ? 'Поиск по VK Видео отключился: серверный токен VK нужно перевыпустить с offline-доступом. А пока просто вставь ссылку на ролик, она работает.'
-            : `VK API не принял запрос поиска (${j.error.error_msg}). Можно вставить ссылку на видео напрямую.`;
-        return res.end(JSON.stringify({ results: [], error: msg }));
-      }
-      const items = (j.response && j.response.items) || [];
       return res.end(
         JSON.stringify({
-          results: items.map((v) => ({
-            kind: 'vk',
-            oid: v.owner_id,
-            id: v.id,
-            title: v.title,
-            thumb: (v.image || []).slice(-1)[0]?.url || '',
-            dur: v.duration ? `${Math.floor(v.duration / 60)}:${String(v.duration % 60).padStart(2, '0')}` : '',
-            channel: v.user_id ? 'VK' : 'Сообщество',
-          })),
+          results: [],
+          error: 'VK Видео работает по ссылке: скопируй адрес ролика из vkvideo.ru или vk.com и вставь его сюда — плеер откроется прямо в комнате.',
         })
       );
     }
