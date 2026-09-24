@@ -145,7 +145,14 @@ function send(msg) {
 
 // Хостинг (Render/Cloudflare) рвёт WS без исходящих кадров примерно через 5 с — на паузе плеера
 // комната тихо отваливалась и переподключалась. Служебный кадр держит канал живым.
+// Основной таймер — из Web Worker: Chrome ограничивает фоновую вкладку одним пробуждением в
+// минуту, и спрятанная вкладка иначе сама роняла бы себе канал. Обычный setInterval остаётся
+// запасным на случай, если Worker недоступен.
 setInterval(() => send({ type: 'ping' }), 3000);
+try {
+  const beat = new Worker(URL.createObjectURL(new Blob(['setInterval(() => postMessage(1), 3000);'], { type: 'text/javascript' })));
+  beat.onmessage = () => send({ type: 'ping' });
+} catch {}
 
 // ---------- Голосовой чат: WebRTC P2P-сетка, сигнализация через тот же WS ----------
 const RTC_CONFIG = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };

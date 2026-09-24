@@ -225,6 +225,7 @@ wss.on('connection', (ws, req) => {
   if (isHost) room.orphanHostCid = null;
   room.clients.set(ws, member);
   ws.isAlive = true;
+  ws.lastBeat = Date.now();
   ws.on('pong', () => {
     ws.isAlive = true;
   });
@@ -240,7 +241,8 @@ wss.on('connection', (ws, req) => {
   });
   broadcast(room, { type: 'presence', presence: presence(room) });
   ws.on('message', (raw) => {
-    ws.isAlive = true; // живой кадр от вкладки важнее протокольного pong: прокси хостинга его не всегда пропускает
+    ws.isAlive = true;
+    ws.lastBeat = Date.now(); // живой кадр от вкладки важнее протокольного pong: прокси хостинга отвечает на ping сам
     let msg;
     try {
       msg = JSON.parse(raw);
@@ -266,11 +268,15 @@ wss.on('connection', (ws, req) => {
   });
 });
 
-// «призраки» (закрытые браузеры без корректного close) вычищаются за ~20 секунд
+// «призраки» (закрытые браузеры без корректного close) вычищаются за ~25 секунд.
+// Порог по молчанию вкладки, а не по протокольному pong: за прокси хостинга на ping отвечает
+// сам край прокси, поэтому мёртвое соединение могло висеть в комнате бесконечно.
+// Живая вкладка шлёт кадр каждые 3 с (даже в фоне — таймер сидит в Web Worker).
 setInterval(() => {
+  const now = Date.now();
   for (const room of rooms.values()) {
     for (const [ws] of room.clients) {
-      if (!ws.isAlive) {
+      if (!ws.isAlive || now - (ws.lastBeat || 0) > 20000) {
         try {
           ws.terminate();
         } catch {}
@@ -282,7 +288,7 @@ setInterval(() => {
       } catch {}
     }
   }
-}, 10000).unref();
+}, 5000).unref();
 
 function projectedState(room) {
   const s = room.state;
