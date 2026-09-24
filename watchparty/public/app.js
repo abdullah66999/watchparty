@@ -40,6 +40,7 @@ function enterRoom(code) {
   $('lobby').classList.add('hidden');
   document.body.classList.add('in-room');
   $('roomLabel').innerHTML = `<span class="lbl">Код&nbsp;</span>${escapeHtml(code)}`;
+  showConn('Подключаемся к серверу…');
   connect();
 }
 
@@ -99,7 +100,7 @@ function connect() {
   // текущий ws — вкладка метает соединения и рвёт то плеер, то хостство
   if (ws) {
     const old = ws;
-    old.onclose = old.onmessage = null;
+    old.onopen = old.onclose = old.onmessage = null;
     try {
       old.close();
     } catch {}
@@ -108,8 +109,34 @@ function connect() {
     `${proto}://${location.host}/ws?room=${encodeURIComponent(room)}&name=${encodeURIComponent(name)}&cid=${encodeURIComponent(CID)}`
   );
   ws = sock;
-  sock.onclose = () => ws === sock && !leaving && setTimeout(connect, 1500);
+  sock.onopen = () => ws === sock && hideConn();
+  sock.onclose = () => {
+    if (ws !== sock || leaving) return;
+    showConn('Переподключаемся к серверу…');
+    setTimeout(connect, 1500);
+  };
   sock.onmessage = (e) => ws === sock && onMessage(JSON.parse(e.data));
+}
+
+// ---------- Статус канала ----------
+// Бесплатный Render засыпает после простоя и просыпается около минуты; всё это время комната
+// выглядит сломанной (чёрный плеер, никого не видно), хотя соединение просто устанавливается.
+let connTimer = null;
+function showConn(text) {
+  const p = $('connState');
+  if (!p) return;
+  p.textContent = text;
+  p.classList.remove('hidden');
+  clearTimeout(connTimer);
+  connTimer = setTimeout(() => {
+    if (!p.classList.contains('hidden')) p.textContent = 'Сервер ещё не ответил — вероятно, он «спит» после простоя. Попробуй перезагрузить страницу через минуту.';
+  }, 12000);
+}
+
+function hideConn() {
+  clearTimeout(connTimer);
+  const p = $('connState');
+  if (p) p.classList.add('hidden');
 }
 
 function send(msg) {
@@ -254,6 +281,7 @@ $('micBtn').onclick = toggleMic;
 function onMessage(msg) {
   switch (msg.type) {
     case 'hello': {
+      hideConn();
       me = msg.you;
       setHost(msg.host);
       renderPresence(msg.presence);
@@ -297,16 +325,136 @@ function onMessage(msg) {
 // ---------- Player ----------
 window.onYouTubeIframeAPIReady = () => {
   player = new YT.Player('player', {
+    playerVars: { playsinline: 1, rel: 0 },
     events: {
       onReady: () => {
         playerReady = true;
-        if (currentVideo) player.loadVideoById(currentVideo.videoId);
+        if (currentVideo && currentVideo.kind !== 'vk') player.loadVideoById(currentVideo.videoId);
+      },
+      onError: (e) => {
+        ytError(+e.data);
       },
       onStateChange: (e) => {
+        if (+e.data === YT.PlayerState.PLAYING) clearYtBlock();
         if (isHost && !applyingRemote) reportState();
       },
     },
   });
+};
+
+// YouTube либо сообщает ошибку кодом (2/5/100/101/150/153), либо молча не поднимает плеер:
+// на перезагруженных фильмах показывается «подтвердите, что вы не бот», состояние остаётся -1,
+// длительность — 0. Без обработки это вечный спиннер на чёрном экране, поэтому держим дозор.
+const YT_ERRORS = {
+  2: 'Ссылка неверная — YouTube не находит такой ролик.',
+  5: 'Ролик повреждён или недоступен во встроенном плеере.',
+  100: 'Видео удалено, либо сделано приватным.',
+  101: 'Владелец видео запретил встраивание на другие сайты.',
+  150: 'Владелец запретил встраивание — за пределами youtube.com ролик не играет.',
+  153: 'Встраивание ограничено владельцем — можно открыть только на YouTube.',
+};
+
+let ytTimer = null;
+let ytRevive = null;
+
+function ytStopTimers() {
+  clearTimeout(ytTimer);
+  clearInterval(ytRevive);
+  ytTimer = ytRevive = null;
+}
+
+function clearYtBlock() {
+  ytStopTimers();
+  const b = $('ytBlock');
+  if (b) b.classList.add('hidden');
+}
+
+function showYtBlock(text, videoId) {
+  const b = $('ytBlock');
+  if (!b) return;
+  clearTimeout(ytTimer);
+  ytTimer = null;
+  $('ytBlockText').textContent = text;
+  $('ytAlt').textContent = isHost
+    ? 'Видео выбираешь ты — оно включится у всех. Смени результат в поиске ниже; если YouTube упрётся, возьми ролик во вкладке «VK Видео».'
+    : 'Видео выбирает хост — предложи ему сменить ролик или переключиться на VK Видео.';
+  const link = $('ytOpen');
+  if (videoId) {
+    link.href = `https://www.youtube.com/watch?v=${encodeURIComponent(videoId)}`;
+    link.classList.remove('hidden');
+  } else {
+    link.classList.add('hidden');
+  }
+  $('ytVk').classList.toggle('hidden', !isHost);
+  b.classList.remove('hidden');
+}
+
+function ytError(code) {
+  clearInterval(ytRevive);
+  ytRevive = null;
+  showYtBlock(YT_ERRORS[code] || `Плеер YouTube вернул ошибку ${code}.`, code ? currentYtId() : '');
+}
+
+function currentYtId() {
+  return currentVideo && currentVideo.kind !== 'vk' ? currentVideo.videoId : '';
+}
+
+// Смотрим, ожил ли ролик. Если через разумный срок плеер так и не сообщил состояние или
+// длительность — закрываем чёрный экран подсказкой, а не крутим спиннер вечно.
+function ytAlive() {
+  let st = -1;
+  let dur = 0;
+  try {
+    st = player ? player.getPlayerState() : -1;
+    dur = player ? player.getDuration() : 0;
+  } catch {}
+  return st >= 0 || dur > 0;
+}
+
+function watchYtStart(videoId) {
+  ytStopTimers();
+  const started = Date.now();
+  const tick = () => {
+    if (!currentVideo || currentVideo.kind === 'vk' || currentVideo.videoId !== videoId) return;
+    if (ytAlive()) return; // плеер ожил — дальше разбирается сам
+    const waited = Date.now() - started;
+    const limit = playerReady ? 20000 : 26000;
+    if (waited > limit) {
+      showYtBlock(
+        playerReady
+          ? 'Ролик так и не запустился: YouTube не отдаёт его встроенному плееру и часто требует «подтвердите, что вы не бот». Помогает «Попробовать снова» или «Открыть на YouTube».'
+          : 'Скрипт плеера YouTube не загрузился — его блокирует сеть или расширение. Проверьте доступ к youtube.com и перезагрузите страницу.',
+        videoId
+      );
+      // подсказка мягкая: если видео всё-таки доедет, она обязана уйти сама
+      ytRevive = setInterval(() => {
+        if (!currentVideo || currentVideo.kind === 'vk' || currentVideo.videoId !== videoId) return clearInterval(ytRevive);
+        if (ytAlive()) clearYtBlock();
+      }, 2000);
+      return;
+    }
+    ytTimer = setTimeout(tick, 1000);
+  };
+  ytTimer = setTimeout(tick, 1500);
+}
+
+$('ytRetry').onclick = () => {
+  clearYtBlock();
+  if (!currentVideo || currentVideo.kind === 'vk') return;
+  const vid = currentVideo.videoId;
+  if (!playerReady) {
+    // сам API мог не подняться — перезагружаем страницу, это единственный способ переподключить скрипт
+    location.reload();
+    return;
+  }
+  applyingRemote = true;
+  player.loadVideoById(vid);
+  setTimeout(() => {
+    applyingRemote = false;
+    if (isHost) playNow();
+    else if (lastState) applyState(lastState);
+  }, 900);
+  watchYtStart(vid);
 };
 
 function setHost(v) {
@@ -324,18 +472,39 @@ function hideAllPlayers() {
 
 let mediaToken = 0;
 
+// Запрос к своему же серверу без таймаута — это вечный ожидатель: Render может «спать», а
+// VK/YouTube на другой стороне держать соединение открытым без ответа. Ждём и отдаём управление.
+async function getJson(url, ms) {
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), ms);
+  try {
+    const r = await fetch(url, { signal: ctrl.signal });
+    return await r.json();
+  } finally {
+    clearTimeout(t);
+  }
+}
+
 // Плеер от VK API (по токену на сервере) в замерах крутил фильм без вставок, анонимный video_ext.php
 // рекламит чаще. Это не гарантия — на подстраховке ниже ad-машина.
+function vkSetParam(url, key, val) {
+  const re = new RegExp(`([?&])${key}=[^&]*`);
+  return re.test(url) ? url.replace(re, `$1${key}=${val}`) : `${url}${url.includes('?') ? '&' : '?'}${key}=${val}`;
+}
+
 async function vkEmbedSrc(oid, id) {
   const origin = encodeURIComponent(location.origin);
+  let src;
   try {
-    const r = await fetch(`/vk/play?oid=${encodeURIComponent(oid)}&id=${encodeURIComponent(id)}`);
-    const j = await r.json();
-    if (j.player && /^https:\/\/(vk\.(com|ru)|vkvideo\.ru)\/video_ext\.php\?/.test(j.player)) {
-      return j.player + (j.player.includes('js_api=1') ? '' : `&js_api=1&origin=${origin}`);
-    }
+    const j = await getJson(`/vk/play?oid=${encodeURIComponent(oid)}&id=${encodeURIComponent(id)}`, 8000);
+    src =
+      j.player && /^https:\/\/(vk\.(com|ru)|vkvideo\.ru)\/video_ext\.php\?/.test(j.player)
+        ? j.player + (j.player.includes('js_api=1') ? '' : `&js_api=1&origin=${origin}`)
+        : null;
   } catch {}
-  return `https://vk.com/video_ext.php?oid=${oid}&id=${id}&hd=2&js_api=1&origin=${origin}`;
+  if (!src) src = `https://vk.com/video_ext.php?oid=${oid}&id=${id}&hd=2&js_api=1&origin=${origin}`;
+  // карточку выбрали → фильм должен начаться, а не ждать ещё одного клика по плееру
+  return vkSetParam(src, 'autoplay', '1');
 }
 
 function loadMedia(media, state) {
@@ -344,7 +513,12 @@ function loadMedia(media, state) {
   lastSeekAt = 0;
   stuckTicks = 0;
   hideHint();
+  clearYtBlock();
   $('placeholder').classList.add('hidden');
+  // Сервер встречает любую новую карточку состоянием {playing:false, time:0} — это не настоящая
+  // пауза, а «видео только что выбрали». Настоящая пауза — когда время больше нуля (возврат
+  // в комнату посреди остановленного фильма), её и восстанавливаем.
+  const fresh = !state || (!state.playing && !state.time);
   if (media.kind === 'vk') {
     if (playerReady) {
       try {
@@ -361,27 +535,43 @@ function loadMedia(media, state) {
     vkEmbedSrc(media.oid, media.id).then((src) => {
       if (token !== mediaToken) return; // к тому моменту уже поставили другое видео
       $('vkFrame').src = src;
-      // хост сам решает, когда жать ▶; зрителю подставляем состояние комнаты, когда iframe поднялся
-      setTimeout(() => token === mediaToken && !isHost && state && applyState(state), 1500);
+      // зрители догоняют комнату, когда iframe поднялся; хост на свежей карточке сам даёт старт
+      setTimeout(() => {
+        if (token !== mediaToken) return;
+        if (isHost) {
+          if (fresh) vkCommand('play');
+        } else if (!fresh) {
+          applyState(state);
+        }
+      }, 1500);
     });
     return;
   }
   hideAllPlayers();
   $('vkFrame').src = 'about:blank';
   $('player').classList.remove('hidden');
+  // pauseVideo() сразу после loadVideoById обрывает начавшуюся загрузку: плеер откатывается
+  // в «не запускался» и висит вечным спиннером — поэтому свежую карточку всегда запускаем.
   if (playerReady) {
     applyingRemote = true;
-    player.loadVideoById(media.videoId);
-    if (state && !state.playing) {
-      try {
-        player.pauseVideo();
-      } catch {}
-    }
+    if (fresh || state.playing) player.loadVideoById(media.videoId);
+    else player.cueVideoById(media.videoId);
     setTimeout(() => {
       applyingRemote = false;
-      if (token === mediaToken && !isHost && state) applyState(state);
+      if (token !== mediaToken) return;
+      if (!fresh && state.time) {
+        try {
+          player.seekTo(state.time, true);
+        } catch {}
+      }
+      if (isHost) {
+        if (fresh || state.playing) playNow();
+      } else if (!fresh) {
+        applyState(state); // на свежей карточке зритель уже играет с нуля — не трогаем
+      }
     }, 800);
   }
+  watchYtStart(media.videoId);
 }
 
 // ---------- VK player (js_api=1 protocol) ----------
@@ -601,6 +791,19 @@ document.querySelectorAll('.tabs button').forEach((b) => {
 $('searchBtn').onclick = doSearch;
 $('qInput').addEventListener('keydown', (e) => e.key === 'Enter' && doSearch());
 
+// «Искать в VK Видео» с подложки YouTube: та же строка, только другая вкладка
+$('ytVk').onclick = () => {
+  const q = $('qInput');
+  if (LINK_RE.test(q.value.trim())) {
+    q.value = '';
+    q.placeholder = 'Название фильма, клипа, шоу…';
+  }
+  const vkTab = document.querySelector('.tabs button[data-p="vk"]');
+  if (vkTab) vkTab.click();
+  $('searchPanel').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  q.focus();
+};
+
 async function doSearch() {
   const q = $('qInput').value.trim();
   if (!q) return;
@@ -612,12 +815,18 @@ async function doSearch() {
     return;
   }
   $('results').innerHTML = '<div class="hint">Ищу…</div>';
+  const slow = setTimeout(() => {
+    const h = $('results').querySelector('.hint');
+    if (h && h.textContent === 'Ищу…') h.textContent = 'Долго ищет: сервер, скорее всего, «спит» после простоя. Сейчас проснётся — попробуй ещё раз через минуту.';
+  }, 9000);
   let data;
   try {
-    data = await (await fetch(`/search?provider=${provider}&q=${encodeURIComponent(q)}`)).json();
+    data = await getJson(`/search?provider=${provider}&q=${encodeURIComponent(q)}`, 25000);
   } catch {
-    $('results').innerHTML = '<div class="hint">Сервер недоступен</div>';
+    $('results').innerHTML = '<div class="hint">Поиск не ответил. Проверь, открыт ли сервер (он мог уснуть на бесплатном хостинге), и нажми «Поиск» ещё раз.</div>';
     return;
+  } finally {
+    clearTimeout(slow);
   }
   const results = data.results || [];
   if (!results.length) {

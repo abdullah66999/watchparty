@@ -166,6 +166,55 @@ main {
   white-space: nowrap;
 }
 
+/* Статус канала: бесплатный Render просыпается ~50 с — без подсказки комната выглядит сломанной */
+#connState {
+  position: absolute; left: 14px; bottom: 14px; z-index: 3;
+  display: flex; align-items: center; gap: 8px;
+  background: rgba(10, 10, 15, 0.82);
+  border: 1px solid var(--accent);
+  color: var(--text);
+  border-radius: 999px;
+  padding: 9px 16px;
+  font-size: 13px; font-weight: 700;
+  backdrop-filter: blur(10px);
+  box-shadow: var(--shadow);
+}
+#connState::before {
+  content: '';
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--accent2);
+  animation: connpulse 1.2s ease-in-out infinite;
+}
+@keyframes connpulse { 0%, 100% { opacity: 0.35; } 50% { opacity: 1; } }
+
+/* YouTube молча отказывает плееру (анти-бот стена, запрет встраивания) — иначе чёрный экран навсегда */
+#ytBlock {
+  position: absolute; inset: 0; z-index: 4;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 12px; padding: 24px 20px;
+  text-align: center;
+  background: rgba(8, 8, 14, 0.88);
+  backdrop-filter: blur(14px);
+}
+#ytBlock .yb-icon { font-size: 34px; }
+#ytBlock .yb-title { font-size: 17px; font-weight: 800; letter-spacing: -0.2px; }
+#ytBlock .yb-text { font-size: 13.5px; line-height: 1.5; color: var(--muted); max-width: 460px; }
+#ytBlock .yb-row { display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; margin-top: 2px; }
+#ytBlock .yb-row a {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  color: var(--text);
+  backdrop-filter: blur(8px);
+  border-radius: 999px;
+  padding: 9px 18px;
+  font-size: 14px; font-weight: 600;
+  text-decoration: none;
+  transition: transform 0.15s, border-color 0.2s;
+}
+#ytBlock .yb-row a:hover { transform: translateY(-1px); border-color: var(--accent); }
+#ytBlock .yb-alt { font-size: 12.5px; color: var(--muted); max-width: 440px; }
+
 /* ---------- Search ---------- */
 #searchPanel {
   margin-top: 16px;
@@ -419,6 +468,10 @@ body:not(.in-room) header .room-info { display: none; }
   #results { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); max-height: 300px; }
   .res img { width: 88px; height: 50px; }
   #syncHint { font-size: 12px; padding: 8px 14px; }
+  #connState { font-size: 11px; padding: 7px 12px; left: 8px; bottom: 8px; max-width: calc(100% - 16px); }
+  #ytBlock { gap: 9px; padding: 16px 12px; }
+  #ytBlock .yb-title { font-size: 15px; }
+  #ytBlock .yb-text, #ytBlock .yb-alt { font-size: 12px; }
   .side-col { max-height: none; border-radius: 16px; }
   #presence { max-height: 76px; }
   #chat { min-height: 140px; max-height: 280px; }

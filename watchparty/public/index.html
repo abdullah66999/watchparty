@@ -50,7 +50,19 @@
             ></iframe>
           </div>
           <div id="placeholder">Найди видео через поиск или вставь ссылку</div>
+          <div id="connState" class="hidden">Подключаемся к серверу…</div>
           <button id="syncHint" class="hidden">▶ Нажми, чтобы догнать остальных</button>
+          <div id="ytBlock" class="hidden">
+            <div class="yb-icon">📼</div>
+            <div class="yb-title">YouTube не отдаёт это видео в комнату</div>
+            <div id="ytBlockText" class="yb-text"></div>
+            <div class="yb-row">
+              <button id="ytRetry">↻ Попробовать снова</button>
+              <button id="ytVk" class="ghost">▶ Искать в VK Видео</button>
+              <a id="ytOpen" class="ghost" target="_blank" rel="noopener noreferrer">Открыть на YouTube</a>
+            </div>
+            <div id="ytAlt" class="yb-alt"></div>
+          </div>
         </div>
         <div id="searchPanel">
           <div class="tabs">

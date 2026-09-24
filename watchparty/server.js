@@ -93,14 +93,20 @@ async function handleSearch(url, res) {
   try {
     if (provider === 'vk') {
       if (!process.env.VK_TOKEN) {
-        return res.end(JSON.stringify({ results: [], error: 'Поиск по VK Видео требует пользовательский VK_TOKEN. Пока можно вставить ссылку вручную.' }));
+        return res.end(JSON.stringify({ results: [], error: 'Поиск по VK Видео не подключён: на сервере нет токена VK. Вставь ссылку на ролик — она открывается как есть.' }));
       }
       const r = await fetch(
         `https://api.vk.com/method/video.search?q=${encodeURIComponent(q)}&count=15&access_token=${process.env.VK_TOKEN}&v=5.135`
       );
       const j = await r.json();
       if (j.error) {
-        return res.end(JSON.stringify({ results: [], error: `VK API: ${j.error.error_msg} (код ${j.error.error_code})` }));
+        // 5 — токен протух или выдан с другого IP (у провайдера адрес меняются). Не показываем
+        // пользователю служебный текст VK: он ничего не делает с ним, кроме как пугается.
+        const msg =
+          j.error.error_code === 5
+            ? 'Поиск по VK Видео отключился: токен приложения устарел. Переподключи VK — а пока просто вставь ссылку на ролик, она работает.'
+            : `VK API не принял запрос поиска (${j.error.error_msg}). Можно вставить ссылку на видео напрямую.`;
+        return res.end(JSON.stringify({ results: [], error: msg }));
       }
       const items = (j.response && j.response.items) || [];
       return res.end(
