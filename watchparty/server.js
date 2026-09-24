@@ -154,6 +154,8 @@ function getRoom(id) {
       media: null, // { kind, videoId, url }
       state: { playing: false, time: 0, at: Date.now() },
       chat: [],
+      orphanHostCid: null, // вкладка-хост, потерянная минуту назад (обрыв WS у прокси), — ей возвращаем хостство
+      orphanAt: 0,
     };
     rooms.set(id, room);
   }
@@ -204,8 +206,17 @@ wss.on('connection', (ws, req) => {
     }
   }
 
-  const isHost = tookOverHost || room.clients.size === 0;
+  // вкладка-хост вернулась в течение минуты после обрыва (прокси хостинга рвёт WS на паузе) —
+  // хостство принадлежит ей, а не тому, кого успели назначить на её месте
+  const restoresHost = !!cid && room.orphanHostCid === cid && Date.now() - room.orphanAt < 60000;
+  if (restoresHost) {
+    for (const m of room.clients.values()) m.host = false;
+    room.orphanHostCid = null;
+  }
+
+  const isHost = tookOverHost || restoresHost || room.clients.size === 0;
   const member = { id, name, cid, host: isHost, voice: false };
+  if (isHost) room.orphanHostCid = null;
   room.clients.set(ws, member);
   ws.isAlive = true;
   ws.on('pong', () => {
@@ -223,6 +234,7 @@ wss.on('connection', (ws, req) => {
   });
   broadcast(room, { type: 'presence', presence: presence(room) });
   ws.on('message', (raw) => {
+    ws.isAlive = true; // живой кадр от вкладки важнее протокольного pong: прокси хостинга его не всегда пропускает
     let msg;
     try {
       msg = JSON.parse(raw);
@@ -235,6 +247,8 @@ wss.on('connection', (ws, req) => {
     if (member.gone) return; // его уже заменило новое соединение этой же вкладки
     room.clients.delete(ws);
     if (member.host) {
+      room.orphanHostCid = member.cid || null;
+      room.orphanAt = Date.now();
       const next = room.clients.values().next().value;
       if (next) {
         next.host = true;
@@ -274,6 +288,8 @@ function projectedState(room) {
 
 function handleMessage(room, member, ws, msg) {
   switch (msg.type) {
+    case 'ping':
+      return send(ws, { type: 'pong' }); // служебный кадр keepalive'а вкладки
     case 'chat': {
       const text = String(msg.text || '').slice(0, 500).trim();
       if (!text) return;

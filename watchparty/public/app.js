@@ -105,6 +105,10 @@ function send(msg) {
   if (ws && ws.readyState === 1) ws.send(JSON.stringify(msg));
 }
 
+// Хостинг (Render/Cloudflare) рвёт WS без исходящих кадров примерно через 5 с — на паузе плеера
+// комната тихо отваливалась и переподключалась. Служебный кадр держит канал живым.
+setInterval(() => send({ type: 'ping' }), 3000);
+
 // ---------- Голосовой чат: WebRTC P2P-сетка, сигнализация через тот же WS ----------
 const RTC_CONFIG = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
 let localStream = null;
@@ -238,14 +242,20 @@ $('micBtn').onclick = toggleMic;
 
 function onMessage(msg) {
   switch (msg.type) {
-    case 'hello':
+    case 'hello': {
       me = msg.you;
       setHost(msg.host);
       renderPresence(msg.presence);
       syncVoicePeers(msg.presence);
-      if (msg.media) loadMedia(msg.media, msg.state);
-      msg.chat.forEach(addChat);
+      // переподключение не должно перезапускать плеер: то же видео уже стоит — только догоняем время
+      if (msg.media && sameMedia(msg.media, currentVideo)) {
+        if (!isHost && msg.state) applyState(msg.state);
+      } else if (msg.media) {
+        loadMedia(msg.media, msg.state);
+      }
+      renderChat(msg.chat); // история приходит целиком — дописывать её к прежней нельзя, будут дубли
       break;
+    }
     case 'presence':
       renderPresence(msg.presence);
       syncVoicePeers(msg.presence);
@@ -633,6 +643,15 @@ function renderPresence(list) {
   $('presence').innerHTML = list
     .map((p) => `<li>${p.host ? '👑 ' : ''}${escapeHtml(p.name)}${p.voice ? ' 🎤' : ''}${p.id === me ? ' <em>(ты)</em>' : ''}</li>`)
     .join('');
+}
+
+function sameMedia(a, b) {
+  return !!a && !!b && a.kind === b.kind && (a.kind === 'vk' ? a.oid === b.oid && a.id === b.id : a.videoId === b.videoId);
+}
+
+function renderChat(list) {
+  $('chat').innerHTML = '';
+  (list || []).forEach(addChat);
 }
 
 function addChat(entry) {
