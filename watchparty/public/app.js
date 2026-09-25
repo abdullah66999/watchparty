@@ -360,14 +360,13 @@ const YT_ERRORS = {
   2: 'Ссылка неверная — YouTube не находит такой ролик.',
   5: 'Ролик повреждён или недоступен во встроенном плеере.',
   100: 'Видео удалено, либо сделано приватным.',
-  101: 'Владелец видео запретил встраивание на другие сайты.',
-  150: 'Владелец запретил встраивание — за пределами youtube.com ролик не играет.',
+  101: 'YouTube не отдаёт ролик встроенному плееру: у него ограничено встраивание, либо медиа не доезжает до твоей сети. Проверить легко — открой ролик на YouTube кнопкой ниже.',
+  150: 'YouTube не отдаёт ролик встроенному плееру: либо владелец запретил встраивание, либо сеть режет медиа YouTube. Если на youtube.com ролик играет, а в комнате нет — это сеть, и выход во «VK Видео».',
   153: 'Встраивание ограничено владельцем — можно открыть только на YouTube.',
 };
 
 let ytTimer = null;
 let ytRevive = null;
-let lastYtId = ''; // id, который попросили у плеера: ошибка 150 приходит раньше, чем currentVideo
 
 function ytStopTimers() {
   clearTimeout(ytTimer);
@@ -404,38 +403,11 @@ function showYtBlock(text, videoId) {
 function ytError(code) {
   clearInterval(ytRevive);
   ytRevive = null;
-  const id = currentYtId();
-  const text = YT_ERRORS[code] || `Плеер YouTube вернул ошибку ${code}.`;
-  // 101/150 — не только «запретил владелец»: так же отвечает YouTube, когда его медиа не доезжает
-  // до клиента (провайдер режет youtube.com). Проверка честная: при живой сети запрос к эмбеду
-  // проходит (непрозрачный ответ всё равно resolve), при блокировке — отваливается по таймауту.
-  if ((code === 101 || code === 150 || code === 153) && id) {
-    ytEmbedReachable(id).then((dead) => showYtBlock(dead ? YT_NETWORK_TEXT : text, id));
-    return;
-  }
-  showYtBlock(text, id);
-}
-
-const YT_NETWORK_TEXT =
-  'Твоя сеть не пропускает YouTube: плеер не может загрузить ролик, поэтому он не играет ни у кого в комнате. Это не настройки видео — попробуй «Открыть на YouTube», а синхронный просмотр возьми во вкладке «VK Видео».';
-
-function ytEmbedReachable(videoId) {
-  return new Promise((resolve) => {
-    const ctl = new AbortController();
-    const timer = setTimeout(() => {
-      ctl.abort();
-      resolve(true);
-    }, 7000);
-    fetch(`https://www.youtube.com/embed/${encodeURIComponent(videoId)}`, { mode: 'no-cors', signal: ctl.signal })
-      .then(() => resolve(false))
-      .catch(() => resolve(true))
-      .finally(() => clearTimeout(timer));
-  });
+  showYtBlock(YT_ERRORS[code] || `Плеер YouTube вернул ошибку ${code}.`, code ? currentYtId() : '');
 }
 
 function currentYtId() {
-  if (currentVideo && currentVideo.kind !== 'vk' && currentVideo.videoId) return currentVideo.videoId;
-  return lastYtId;
+  return currentVideo && currentVideo.kind !== 'vk' ? currentVideo.videoId : '';
 }
 
 // Смотрим, ожил ли ролик. Если через разумный срок плеер так и не сообщил состояние или
@@ -577,7 +549,6 @@ function loadMedia(media, state) {
   hideAllPlayers();
   $('vkFrame').src = 'about:blank';
   $('player').classList.remove('hidden');
-  lastYtId = media.videoId;
   // pauseVideo() сразу после loadVideoById обрывает начавшуюся загрузку: плеер откатывается
   // в «не запускался» и висит вечным спиннером — поэтому свежую карточку всегда запускаем.
   if (playerReady) {
