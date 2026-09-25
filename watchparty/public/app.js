@@ -738,9 +738,15 @@ function applyState(state) {
   if (currentVideo.kind === 'vk' && vkAd) return; // время рекламы — не время фильма
   // Перемотку плеер догоняет несколько секунд: в это окно не ищем заново и не restart-им старт,
   // иначе зритель мотается по кругу и не начинает играть никогда.
-  const calm = currentVideo.kind === 'vk' && Date.now() < vkSeekCalmUntil;
+  let calm = currentVideo.kind === 'vk' && Date.now() < vkSeekCalmUntil;
   const expected = state.playing ? state.time + (Date.now() - state.at) / 1000 : state.time;
   const drift = Math.abs(currentVideo.kind === 'vk' ? vkTime - expected : playerTime() - expected);
+  // Окно спокойствия — про то, что плеер едет в ТОЧКУ, которую мы сами задали. Если комната уехала
+  // в другую, ждать бессмысленно: зритель будет смотреть чужой фрагмент ещё десять секунд.
+  if (calm && vkSeekTarget >= 0 && Math.abs(expected - vkSeekTarget) > 10) {
+    calm = false;
+    vkSeekCalmUntil = 0;
+  }
 
   if (state.playing && !nowPlaying() && !calm) playNow();
   if (!state.playing && nowPlaying()) {
