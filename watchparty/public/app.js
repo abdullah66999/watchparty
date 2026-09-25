@@ -367,6 +367,7 @@ const YT_ERRORS = {
 
 let ytTimer = null;
 let ytRevive = null;
+let lastYtId = ''; // id, который попросили у плеера: ошибка 150 приходит раньше, чем currentVideo
 
 function ytStopTimers() {
   clearTimeout(ytTimer);
@@ -433,7 +434,8 @@ function ytEmbedReachable(videoId) {
 }
 
 function currentYtId() {
-  return currentVideo && currentVideo.kind !== 'vk' ? currentVideo.videoId : '';
+  if (currentVideo && currentVideo.kind !== 'vk' && currentVideo.videoId) return currentVideo.videoId;
+  return lastYtId;
 }
 
 // Смотрим, ожил ли ролик. Если через разумный срок плеер так и не сообщил состояние или
@@ -575,6 +577,7 @@ function loadMedia(media, state) {
   hideAllPlayers();
   $('vkFrame').src = 'about:blank';
   $('player').classList.remove('hidden');
+  lastYtId = media.videoId;
   // pauseVideo() сразу после loadVideoById обрывает начавшуюся загрузку: плеер откатывается
   // в «не запускался» и висит вечным спиннером — поэтому свежую карточку всегда запускаем.
   if (playerReady) {
