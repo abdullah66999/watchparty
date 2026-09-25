@@ -741,9 +741,12 @@ function applyState(state) {
   let calm = currentVideo.kind === 'vk' && Date.now() < vkSeekCalmUntil;
   const expected = state.playing ? state.time + (Date.now() - state.at) / 1000 : state.time;
   const drift = Math.abs(currentVideo.kind === 'vk' ? vkTime - expected : playerTime() - expected);
-  // Окно спокойствия — про то, что плеер едет в ТОЧКУ, которую мы сами задали. Если комната уехала
-  // в другую, ждать бессмысленно: зритель будет смотреть чужой фрагмент ещё десять секунд.
-  if (calm && vkSeekTarget >= 0 && Math.abs(expected - vkSeekTarget) > 10) {
+  // Это окно — про то, что плеер едет в ТОЧКУ, которую мы сами задали. Если комната уехала в
+  // другую, ждать бессмысленно: зритель смотрит чужой фрагмент. Такая же логика и у паузы между
+  // перемотками: новую цель ждём не четыре секунды, а столько, чтобы не долбить плеер дважды
+  // в одну точку.
+  const retarget = currentVideo.kind === 'vk' && vkSeekTarget >= 0 && Math.abs(expected - vkSeekTarget) > 10;
+  if (calm && retarget) {
     calm = false;
     vkSeekCalmUntil = 0;
   }
@@ -753,7 +756,7 @@ function applyState(state) {
     if (currentVideo.kind === 'vk') vkCommand('pause');
     else if (playerReady) player.pauseVideo();
   }
-  if (drift > 2 && !calm && Date.now() - lastSeekAt > 4000) {
+  if (drift > 2 && !calm && Date.now() - lastSeekAt > (retarget ? 1200 : 4000)) {
     lastSeekAt = Date.now();
     if (currentVideo.kind === 'vk') {
       vkTime = expected; // не ждём события seeked: с ним VK иногда не отвечает и мы мотали каждые 2с
