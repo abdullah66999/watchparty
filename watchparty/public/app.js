@@ -844,10 +844,6 @@ onMessage = (msg) => {
   if (msg.state) msg.state = { ...msg.state, at: Date.now() };
   if (msg.type === 'state' || msg.type === 'hello') lastState = msg.state;
   origOnMessage(msg);
-  // До следующего тика (а это до двух секунд) зритель смотрит не тот фрагмент, пока хост крутит
-  // перемотку, и стоит с.playing=true там, где комната уже на паузе. Применяем сразу — лишние
-  // перемотки отсекают окно спокойствия и пауза между ними.
-  if (msg.type === 'state' && !isHost) applyState(msg.state);
 };
 
 document.addEventListener('visibilitychange', () => !document.hidden && lastState && !isHost && applyState(lastState));
