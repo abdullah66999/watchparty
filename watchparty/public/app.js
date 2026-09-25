@@ -403,7 +403,33 @@ function showYtBlock(text, videoId) {
 function ytError(code) {
   clearInterval(ytRevive);
   ytRevive = null;
-  showYtBlock(YT_ERRORS[code] || `Плеер YouTube вернул ошибку ${code}.`, code ? currentYtId() : '');
+  const id = currentYtId();
+  const text = YT_ERRORS[code] || `Плеер YouTube вернул ошибку ${code}.`;
+  // 101/150 — не только «запретил владелец»: так же отвечает YouTube, когда его медиа не доезжает
+  // до клиента (провайдер режет youtube.com). Проверка честная: при живой сети запрос к эмбеду
+  // проходит (непрозрачный ответ всё равно resolve), при блокировке — отваливается по таймауту.
+  if ((code === 101 || code === 150 || code === 153) && id) {
+    ytEmbedReachable(id).then((dead) => showYtBlock(dead ? YT_NETWORK_TEXT : text, id));
+    return;
+  }
+  showYtBlock(text, id);
+}
+
+const YT_NETWORK_TEXT =
+  'Твоя сеть не пропускает YouTube: плеер не может загрузить ролик, поэтому он не играет ни у кого в комнате. Это не настройки видео — попробуй «Открыть на YouTube», а синхронный просмотр возьми во вкладке «VK Видео».';
+
+function ytEmbedReachable(videoId) {
+  return new Promise((resolve) => {
+    const ctl = new AbortController();
+    const timer = setTimeout(() => {
+      ctl.abort();
+      resolve(true);
+    }, 7000);
+    fetch(`https://www.youtube.com/embed/${encodeURIComponent(videoId)}`, { mode: 'no-cors', signal: ctl.signal })
+      .then(() => resolve(false))
+      .catch(() => resolve(true))
+      .finally(() => clearTimeout(timer));
+  });
 }
 
 function currentYtId() {
@@ -781,7 +807,9 @@ function checkBlockedStart() {
   const want = wantPlay || (!isHost && lastState && lastState.playing);
   const adOnVk = currentVideo && currentVideo.kind === 'vk' && vkAd;
   const youtube = currentVideo && currentVideo.kind !== 'vk';
-  if (!currentVideo || adOnVk || !want) {
+  // подложка «YouTube не отдаёт» уже объясняет проблему — вторая подсказка поверх неё противоречит первой
+  const ytBlocked = !$('ytBlock').classList.contains('hidden');
+  if (!currentVideo || adOnVk || !want || ytBlocked) {
     stuckTicks = 0;
     h.classList.add('hidden');
     return;
