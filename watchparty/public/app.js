@@ -973,14 +973,31 @@ function sameMedia(a, b) {
 function renderChat(list) {
   $('chat').innerHTML = '';
   (list || []).forEach(addChat);
+  showChatEmpty(!(list || []).length);
 }
 
 function addChat(entry) {
   const div = document.createElement('div');
   div.className = 'msg' + (entry.id === me ? ' mine' : '');
   div.innerHTML = `<b>${escapeHtml(entry.from)}</b> <span>${escapeHtml(entry.text)}</span>`;
+  showChatEmpty(false);
   $('chat').appendChild(div);
   $('chat').scrollTop = $('chat').scrollHeight;
+}
+
+// Пустой чат выглядит как провал в вёрстке — показываем понятную подпись вместо дыры
+function showChatEmpty(show) {
+  const hint = $('chat').querySelector('.chat-empty');
+  if (!show) {
+    if (hint) hint.remove();
+    return;
+  }
+  if (!hint) {
+    const div = document.createElement('div');
+    div.className = 'chat-empty';
+    div.textContent = 'Пока тихо — напиши первым';
+    $('chat').appendChild(div);
+  }
 }
 
 function escapeHtml(s) {
