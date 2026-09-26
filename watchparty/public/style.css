@@ -16,7 +16,9 @@
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
 
-html { color-scheme: dark; }
+/* Вбок страница не скроллится никогда: на телефоне такой скролл выглядит как
+   «картинка плывёт» — палец чуть качнулся и весь интерфейс уехал на 10px. */
+html { color-scheme: dark; overflow-x: clip; }
 
 body {
   background:
@@ -111,7 +113,9 @@ button.ghost:hover { box-shadow: none; border-color: var(--accent); }
 
 main {
   display: grid;
-  grid-template-columns: 1fr 340px;
+  /* minmax(0,…) вместо 1fr: иначе колонка не может сузиться до ширины экрана
+     и на телефоне 360px страница становится 374px — её можно сдвинуть вбок. */
+  grid-template-columns: minmax(0, 1fr) 340px;
   gap: 22px;
   padding: 6px 28px 28px;
   flex: 1;
@@ -119,8 +123,9 @@ main {
   width: 100%;
   margin: 0 auto;
 }
+.player-col, .side-col { min-width: 0; }
 
-@media (max-width: 980px) { main { grid-template-columns: 1fr; } }
+@media (max-width: 980px) { main { grid-template-columns: minmax(0, 1fr); } }
 
 /* ---------- Player ---------- */
 #playerBox {
@@ -248,6 +253,8 @@ main {
 #searchRow { display: flex; gap: 10px; }
 input[type='text'] {
   flex: 1;
+  /* min-content у <input> ≈ 20 символов: без этого поле не влезает в узкий экран */
+  min-width: 0;
   background: rgba(0, 0, 0, 0.35);
   border: 1px solid var(--border);
   color: var(--text);
@@ -282,7 +289,7 @@ input::placeholder { color: #6b7189; }
 .res:hover { background: rgba(124, 108, 255, 0.08); border-color: rgba(124, 108, 255, 0.45); transform: translateY(-2px); }
 .res img { width: 112px; height: 63px; object-fit: cover; border-radius: 8px; flex-shrink: 0; background: #000; }
 .res .meta { min-width: 0; }
-.res .t { font-size: 13px; font-weight: 600; line-height: 1.35; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.res .t { font-size: 13px; font-weight: 600; line-height: 1.35; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .res .s { font-size: 12px; color: var(--muted); margin-top: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 #searchHint { color: var(--muted); font-size: 12px; font-weight: 600; margin-top: 8px; min-height: 16px; }
@@ -339,10 +346,12 @@ input::placeholder { color: #6b7189; }
   align-items: center;
   gap: 8px;
   min-height: 40px;
+  min-width: 0;
   padding: 0 12px;
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.04);
   font-weight: 600;
+  overflow-wrap: anywhere;
 }
 /* Корона передачи — та же порода кнопок, что микрофон и отправка: кругляш с градиентом */
 #presence li .pass {
@@ -394,6 +403,9 @@ input::placeholder { color: #6b7189; }
   padding: 8px 12px;
   max-width: 92%;
   align-self: flex-start;
+  /* ссылка без пробелов не должна растягивать всю страницу — min-content считается по ней */
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 .msg b { color: var(--accent2); margin-right: 6px; font-weight: 800; }
 .msg.mine {
