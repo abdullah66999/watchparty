@@ -135,22 +135,27 @@ main {
 #player, #player iframe { position: absolute; inset: 0; width: 100%; height: 100%; }
 #vkBox { position: absolute; inset: 0; }
 #vkBox iframe { width: 100%; height: 100%; border: 0; display: block; }
+/* Пустая комната: это не «плеер, который сломался», а приглашение включить видео.
+   Свою подсветку даём именно здесь — чёрная дыра 16:9 читается как поломка. */
 #placeholder {
   position: absolute; inset: 0;
-  display: flex; flex-direction: column; gap: 10px;
+  display: flex; flex-direction: column; gap: 6px;
   align-items: center; justify-content: center;
-  color: var(--muted); font-size: 16px; font-weight: 600;
+  text-align: center; padding: 16px;
+  background:
+    radial-gradient(520px 240px at 50% 0%, rgba(124, 108, 255, 0.22), transparent 70%),
+    radial-gradient(420px 220px at 50% 100%, rgba(62, 198, 255, 0.13), transparent 70%),
+    #0b0b12;
 }
-#placeholder::before {
-  content: '▶';
-  width: 64px; height: 64px;
-  display: flex; align-items: center; justify-content: center;
-  border-radius: 50%;
-  background: var(--panel);
-  border: 1px solid var(--border);
-  font-size: 22px;
-  padding-left: 4px;
+.ph-badge {
+  width: 54px; height: 54px; margin-bottom: 6px;
+  display: grid; place-items: center; font-size: 25px;
+  background: var(--panel); border: 1px solid var(--border);
+  border-radius: 18px; backdrop-filter: blur(8px);
 }
+.ph-title { color: var(--text); font-size: 17px; font-weight: 800; }
+.ph-sub { color: var(--muted); font-size: 13px; font-weight: 500; line-height: 1.45; max-width: 44ch; }
+#phCta { margin-top: 12px; font-weight: 700; }
 /* Всплывает только когда зритель не смог стартовать сам (autoplay-политика браузера) */
 #syncHint {
   position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%);
@@ -504,6 +509,12 @@ body:not(.in-room) header .room-info { display: none; }
 
   main { padding: 4px 12px 18px; gap: 14px; }
   #playerBox { border-radius: 14px; }
+  /* на телефоне экран плеера ~207 px — бейджу и крупному заголовку там не место */
+  #placeholder { gap: 4px; }
+  .ph-badge { display: none; }
+  .ph-title { font-size: 15px; }
+  .ph-sub { font-size: 12px; }
+  #phCta { margin-top: 8px; padding: 7px 15px; font-size: 13px; }
   #searchPanel { padding: 10px; border-radius: 14px; }
   .tabs button { padding: 6px 13px; font-size: 12px; }
   input[type='text'] { font-size: 16px; }

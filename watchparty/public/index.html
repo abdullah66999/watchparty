@@ -49,7 +49,12 @@
               allowfullscreen
             ></iframe>
           </div>
-          <div id="placeholder">Найди видео через поиск или вставь ссылку</div>
+          <div id="placeholder">
+            <div class="ph-badge">🍿</div>
+            <div class="ph-title" id="phTitle">Здесь появится видео</div>
+            <div class="ph-sub" id="phSub">Вставь ссылку на ролик с VK Видео — он включится у всех в комнате.</div>
+            <button id="phCta" type="button">Вставить ссылку</button>
+          </div>
           <div id="connState" class="hidden">Подключаемся к серверу…</div>
           <div id="syncHint" class="hidden">▶ Нажми на ▶ в плеере — браузер не запускает видео сам</div>
           <div id="ytBlock" class="hidden">
@@ -66,11 +71,11 @@
         </div>
         <div id="searchPanel">
           <div class="tabs">
-            <button data-p="youtube" class="active">YouTube</button>
-            <button data-p="vk">VK Видео</button>
+            <button data-p="vk" class="active">VK Видео</button>
+            <button data-p="youtube">YouTube</button>
           </div>
           <div id="searchRow">
-            <input id="qInput" type="text" placeholder="Название фильма, клипа, шоу…" maxlength="100" autocomplete="off" />
+            <input id="qInput" type="text" placeholder="Ссылка на ролик: vkvideo.ru/video-123456_789" maxlength="100" autocomplete="off" />
             <button id="searchBtn">Поиск</button>
           </div>
           <div id="searchHint"></div>

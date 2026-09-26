@@ -472,8 +472,9 @@ function setHost(v) {
   const changed = isHost !== v;
   isHost = v;
   document.body.dataset.role = v ? 'host' : 'guest';
-  $('qInput').placeholder = v ? 'Название или ссылка…' : 'Видео выбирает хост — просто смотри';
-  $('searchHint').textContent = v ? 'Кликни по карточке — видео включится у всех. Можно вставить и ссылку.' : '';
+  $('qInput').placeholder = v ? (provider === 'vk' ? PH_VK : PH_YT) : 'Видео выбирает хост — просто смотри';
+  $('searchHint').textContent = v ? (provider === 'vk' ? HINT_VK : HINT_YT) : '';
+  renderEmptyState();
   if (!v) hideHint();
   // после смены роли список участников перерисовываем: у нового хоста появляются короны-кнопки
   if (changed && lastPresence.length) renderPresence(lastPresence);
@@ -866,15 +867,35 @@ $('copyLink').onclick = (e) => copyRoomLink(e.currentTarget);
 $('roomLabel').onclick = (e) => copyRoomLink(e.currentTarget);
 
 // ---------- Поиск в каталоге (как в Rave) ----------
-let provider = 'youtube';
+// VK — главный источник, YouTube по умолчанию открытым не показываем: в сети пользователя
+// он часто не играет, и первый же поиск ведёт в тупик.
+let provider = 'vk';
 const LINK_RE = /(?:youtube\.com\/(?:watch\?v=|live\/|embed\/|shorts\/)|youtu\.be\/)[\w-]{11}|(?:vk\.com|vkvideo\.ru)\/(?:#|video|clip)-?\d+_\d+/;
 const PH_YT = 'Название фильма, клипа, шоу…';
 const PH_VK = 'Ссылка на ролик: vkvideo.ru/video-123456_789';
+const HINT_YT = 'Кликни по карточке — видео включится у всех. Можно вставить и ссылку.';
+const HINT_VK = 'Вставь ссылку на ролик из vkvideo.ru или vk.com — он запустится у всех в комнате.';
+
+// Пустой экран — приглашение, а не «сломанный плеер». У зрителя кнопки нет: видео выбирает хост.
+function renderEmptyState() {
+  $('phTitle').textContent = isHost ? 'Здесь появится видео' : 'Хост ещё ничего не включил';
+  $('phSub').textContent = isHost
+    ? 'Вставь ссылку на ролик с VK Видео — он включится у всех в комнате.'
+    : 'Как только хост включит ролик, он начнётся и у тебя.';
+  $('phCta').classList.toggle('hidden', !isHost);
+}
+$('phCta').onclick = () => {
+  $('searchPanel').scrollIntoView({ behavior: 'smooth', block: 'center' });
+  $('qInput').focus();
+};
 
 document.querySelectorAll('.tabs button').forEach((b) => {
   b.onclick = () => {
     provider = b.dataset.p;
-    $('qInput').placeholder = provider === 'vk' ? PH_VK : PH_YT;
+    if (isHost) {
+      $('qInput').placeholder = provider === 'vk' ? PH_VK : PH_YT;
+      $('searchHint').textContent = provider === 'vk' ? HINT_VK : HINT_YT;
+    }
     document.querySelectorAll('.tabs button').forEach((x) => x.classList.toggle('active', x === b));
     if (LINK_RE.test($('qInput').value.trim())) return;
     if ($('qInput').value.trim() || $('results').children.length) doSearch(); // ищем сразу в этой вкладке
