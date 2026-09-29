@@ -151,8 +151,34 @@ function send(msg) {
 setInterval(() => send({ type: 'ping' }), 3000);
 try {
   const beat = new Worker(URL.createObjectURL(new Blob(['setInterval(() => postMessage(1), 3000);'], { type: 'text/javascript' })));
-  beat.onmessage = () => send({ type: 'ping' });
+  beat.onmessage = () => {
+    send({ type: 'ping' });
+    sendPos(); // фоновая вкладка тоже должна оставаться видимой в списке «на какой ты секунде»
+  };
 } catch {}
+
+// ---------- «на какой ты секунде» ----------
+// Каждая вкладка рапортует свою позицию сама: только так видно, что у соседа фильм реально
+// идёт рядом, а не что все показывают одно и то же состояние комнаты.
+const peersPos = new Map(); // id -> { t, playing, at } — at местный момент приёма кадра
+
+function selfTime() {
+  if (!currentVideo) return 0;
+  if (currentVideo.kind === 'vk') {
+    if (!vkPlaying) return vkTime;
+    // Не дальше 2 с за последнее событие плеера: зависший эмбед должен показывать стоящую
+    // секунду, а не красиво уезжать вперёд — это и есть сигнал «у кого-то встал».
+    return vkTime + Math.min(2, (Date.now() - vkTimeAt) / 1000);
+  }
+  return playerTime();
+}
+
+function sendPos() {
+  if (!currentVideo) return;
+  send({ type: 'pos', t: Math.max(0, selfTime()), playing: nowPlaying() });
+}
+
+setInterval(sendPos, 1000);
 
 // ---------- Голосовой чат: WebRTC P2P-сетка, сигнализация через тот же WS ----------
 const RTC_CONFIG = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
@@ -320,6 +346,9 @@ function onMessage(msg) {
       break;
     case 'state':
       if (!isHost) applyState(msg.state);
+      break;
+    case 'pos':
+      peersPos.set(msg.id, { t: Number(msg.t) || 0, playing: !!msg.playing, at: Date.now() });
       break;
     case 'chat':
       addChat(msg.entry);
@@ -529,6 +558,7 @@ function loadMedia(media, state) {
     hideAllPlayers();
     $('vkBox').classList.remove('hidden');
     vkTime = 0;
+    vkTimeAt = Date.now();
     vkPlaying = false;
     vkAd = false;
     vkAdUntil = 0;
@@ -583,6 +613,7 @@ function loadMedia(media, state) {
 
 // ---------- VK player (js_api=1 protocol) ----------
 let vkTime = 0;
+let vkTimeAt = Date.now(); // момент, когда плеер в последний раз назвал эту точку: между его событиями время крутится само
 let vkPlaying = false;
 let vkDuration = 0;
 let vkAd = false;
@@ -673,6 +704,7 @@ window.addEventListener('message', (e) => {
     }
     if (d.time > vkTime + 0.4) vkPlaying = true; // время пошло вперёд — фильм играет (после рекламы VK возобновляет его молча)
     vkTime = d.time;
+    vkTimeAt = now;
   }
   if (typeof d.duration === 'number' && d.duration > vkDuration) vkDuration = d.duration;
   if (ev === 'started' || ev === 'resumed') vkPlaying = true;
@@ -761,6 +793,7 @@ function applyState(state) {
     lastSeekAt = Date.now();
     if (currentVideo.kind === 'vk') {
       vkTime = expected; // не ждём события seeked: с ним VK иногда не отвечает и мы мотали каждые 2с
+      vkTimeAt = Date.now();
       vkCommand('seek', expected);
     } else if (playerReady) {
       applyingRemote = true;
@@ -971,7 +1004,7 @@ $('chatForm').onsubmit = (e) => {
   e.preventDefault();
   const text = $('chatInput').value.trim();
   if (!text) return;
-  send({ type: 'chat', text });
+  send({ type: 'chat', text, pos: currentVideo ? selfTime() : null });
   $('chatInput').value = '';
 };
 
@@ -979,13 +1012,14 @@ let lastPresence = []; // последний список участников �
 
 function renderPresence(list) {
   lastPresence = list || [];
+  for (const p of lastPresence) if (p.pos) peersPos.set(p.id, { t: p.pos.t, playing: !!p.pos.playing, at: Date.now() });
   const canPass = isHost && lastPresence.length > 1;
   $('presence').innerHTML = lastPresence
     .map(
       (p) =>
         `<li data-id="${p.id}" data-name="${escapeHtml(p.name)}"><span>${p.host ? '👑 ' : ''}${escapeHtml(p.name)}${
           p.voice ? ' 🎤' : ''
-        }${p.id === me ? ' <em>(ты)</em>' : ''}</span>${
+        }${p.id === me ? ' <em>(ты)</em>' : ''} <span class="pos" data-pos="${p.id}"></span></span>${
           canPass && !p.host ? '<button class="pass" title="Передать управление" aria-label="Передать управление">👑</button>' : ''
         }</li>`
     )
@@ -996,7 +1030,48 @@ function renderPresence(list) {
       if (confirm(`Передать управление ${name}? Ты станешь зрителем.`)) send({ type: 'passHost', to: b.closest('li').dataset.id });
     };
   });
+  updatePos();
 }
+
+function fmtPos(t) {
+  t = Math.max(0, Math.floor(t));
+  const s = t % 60,
+    m = Math.floor(t / 60) % 60,
+    h = Math.floor(t / 3600);
+  return h ? `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}` : `${m}:${String(s).padStart(2, '0')}`;
+}
+
+// Чипы обновляются часто и по одному тексту — перерисовывать весь список каждую полсекунды
+// нельзя, иначе кнопка «передать лидерку» всё время пересоздавалась бы под курсором.
+function updatePos() {
+  const ul = $('presence');
+  if (!ul) return;
+  const host = lastPresence.find((p) => p.host);
+  // эталон для цветовой оценки — позиция лидера: своя, если лидер я, иначе его последний кадр
+  const hostRec = !host ? null : host.id === me ? { t: selfTime() } : peersPos.get(host.id);
+  ul.querySelectorAll('li').forEach((li) => updatePosChip(li.querySelector('.pos'), li.dataset.id, host, hostRec));
+}
+
+function updatePosChip(el, id, host, hostRec) {
+  if (!el) return;
+  if (!currentVideo) {
+    el.textContent = '';
+    el.className = 'pos';
+    return;
+  }
+  const rec = id === me ? { t: selfTime(), playing: nowPlaying(), at: Date.now() } : peersPos.get(id);
+  if (!rec || Date.now() - rec.at > 9000) {
+    el.textContent = '—';
+    el.className = 'pos dim';
+    return;
+  }
+  el.textContent = fmtPos(rec.t) + (rec.playing ? '' : ' ⏸');
+  const ref = id === me || host?.id === id ? rec : hostRec;
+  const gap = ref && host ? Math.abs(rec.t - ref.t) : 0;
+  el.className = 'pos ' + (!host || gap <= 1 ? 'ok' : gap <= 3 ? 'warn' : 'bad');
+}
+
+setInterval(updatePos, 500);
 
 function sameMedia(a, b) {
   return !!a && !!b && a.kind === b.kind && (a.kind === 'vk' ? a.oid === b.oid && a.id === b.id : a.videoId === b.videoId);
@@ -1011,7 +1086,11 @@ function renderChat(list) {
 function addChat(entry) {
   const div = document.createElement('div');
   div.className = 'msg' + (entry.id === me ? ' mine' : '');
-  div.innerHTML = `<b>${escapeHtml(entry.from)}</b> <span>${escapeHtml(entry.text)}</span>`;
+  // секунда из кадра, а не пересчёт от «времени комнаты»: так видно, где реально был автор
+  const cpos = Number.isFinite(entry.pos) && entry.pos >= 0 ? `<span class="cpos" title="На какой секунде был автор">⏱ ${fmtPos(
+    entry.pos
+  )}</span>` : '';
+  div.innerHTML = `<b>${escapeHtml(entry.from)}</b>${cpos} <span>${escapeHtml(entry.text)}</span>`;
   showChatEmpty(false);
   $('chat').appendChild(div);
   $('chat').scrollTop = $('chat').scrollHeight;

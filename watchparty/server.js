@@ -123,7 +123,13 @@ function send(ws, msg) {
 }
 
 function presence(room) {
-  return [...room.clients.values()].map((m) => ({ id: m.id, name: m.name, host: m.host, voice: !!m.voice }));
+  return [...room.clients.values()].map((m) => ({
+    id: m.id,
+    name: m.name,
+    host: m.host,
+    voice: !!m.voice,
+    pos: m.pos || null,
+  }));
 }
 
 const wss = new WebSocketServer({ server, path: '/ws' });
@@ -245,10 +251,26 @@ function handleMessage(room, member, ws, msg) {
   switch (msg.type) {
     case 'ping':
       return send(ws, { type: 'pong' }); // служебный кадр keepalive'а вкладки
+    case 'pos': {
+      // «я сейчас на этой секунде». Сервер только рассылает позиции по комнате и хранит
+      // последнюю: рассогласование считает сам клиент, потому что часы у всех разные.
+      const t = Number(msg.t);
+      if (!Number.isFinite(t) || t < 0 || t > 864000) return;
+      member.pos = { t: Math.round(t * 10) / 10, playing: !!msg.playing };
+      broadcast(room, { type: 'pos', id: member.id, t: member.pos.t, playing: member.pos.playing }, ws);
+      return;
+    }
     case 'chat': {
       const text = String(msg.text || '').slice(0, 500).trim();
       if (!text) return;
-      const entry = { from: member.name, id: member.id, text, at: Date.now() };
+      const raw = msg.pos == null || msg.pos === '' ? NaN : Number(msg.pos);
+      const entry = {
+        from: member.name,
+        id: member.id,
+        text,
+        at: Date.now(),
+        pos: Number.isFinite(raw) && raw >= 0 && raw <= 864000 ? Math.round(raw * 10) / 10 : null,
+      };
       room.chat.push(entry);
       if (room.chat.length > 300) room.chat.shift();
       broadcast(room, { type: 'chat', entry });

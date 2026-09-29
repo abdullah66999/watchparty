@@ -375,6 +375,27 @@ input::placeholder { color: #6b7189; }
 #presence li .pass:hover { transform: translateY(-1px); box-shadow: 0 6px 24px rgba(124, 108, 255, 0.4); }
 #presence li .pass:active { transform: translateY(0); }
 #presence em { color: var(--muted); font-style: normal; font-weight: 500; }
+/* Секунда фильма рядом с ником: цвет — наглядная проверка синхронности.
+   Зелёный = идём в ноге с лидером, янтарь = 1–3 с, красный = сильнее. */
+#presence li .pos {
+  margin-left: 8px;
+  padding: 2px 9px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.2px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+}
+#presence li .pos:empty { display: none; }
+#presence li .pos.ok { color: #8ee9b6; background: rgba(58, 200, 140, 0.13); border-color: rgba(120, 220, 170, 0.26); }
+#presence li .pos.warn { color: #ffd08a; background: rgba(240, 180, 70, 0.14); border-color: rgba(240, 190, 90, 0.3); }
+#presence li .pos.bad { color: #ff9d9d; background: rgba(235, 90, 90, 0.15); border-color: rgba(240, 120, 120, 0.32); }
+/* «—» значит кадр позиции давно не приходил: вкладка спрятана или отвалилась */
+#presence li .pos.dim { opacity: 0.55; }
 
 #chat {
   flex: 1;
@@ -408,6 +429,21 @@ input::placeholder { color: #6b7189; }
   overflow-wrap: anywhere;
 }
 .msg b { color: var(--accent2); margin-right: 6px; font-weight: 800; }
+/* Секунда фильма автора сообщения — по ней видно, что человек писал с той же точки, что и мы */
+.msg .cpos {
+  display: inline-block;
+  margin-right: 6px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.07);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  vertical-align: 1px;
+}
 .msg.mine {
   background: rgba(124, 108, 255, 0.16);
   border-radius: 14px 4px 14px 14px;
