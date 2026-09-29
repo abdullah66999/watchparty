@@ -1067,8 +1067,10 @@ function updatePosChip(el, id, host, hostRec) {
   }
   el.textContent = fmtPos(rec.t) + (rec.playing ? '' : ' ⏸');
   const ref = id === me || host?.id === id ? rec : hostRec;
+  // Пороги шире секунды: сама секунда округляется до целых, а кадры позиции идут раз в
+  // секунду — иначе зелёный мигал бы янтарём на совершенно синхронной комнате.
   const gap = ref && host ? Math.abs(rec.t - ref.t) : 0;
-  el.className = 'pos ' + (!host || gap <= 1 ? 'ok' : gap <= 3 ? 'warn' : 'bad');
+  el.className = 'pos ' + (!host || gap <= 2 ? 'ok' : gap <= 5 ? 'warn' : 'bad');
 }
 
 setInterval(updatePos, 500);
