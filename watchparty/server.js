@@ -28,6 +28,7 @@ function serverless() {
   return http.createServer((req, res) => {
     const url = new URL(req.url, `http://${req.headers.host}`);
     if (url.pathname === '/search') return handleSearch(url, res);
+    if (url.pathname === '/stream/gdrive') return handleGDriveStream(url, req, res);
     let file = url.pathname === '/' ? '/index.html' : url.pathname;
     const full = path.join(PUBLIC_DIR, path.normalize(file));
     if (!full.startsWith(PUBLIC_DIR)) {
@@ -49,6 +50,36 @@ function walk(node, cb) {
   if (node && typeof node === 'object') {
     cb(node);
     for (const k in node) walk(node[k], cb);
+  }
+}
+
+
+async function handleGDriveStream(url, req, res) {
+  const id = (url.searchParams.get('id') || '').trim();
+  if (!id || !/^[a-zA-Z0-9_-]{15,65}$/.test(id)) {
+    res.writeHead(400, { 'Content-Type': 'text/plain; charset=utf-8' });
+    return res.end('Некорректный ID файла Google Диска');
+  }
+  const driveUrl = `https://drive.usercontent.google.com/download?id=${id}&export=download&authuser=0`;
+  const headers = { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' };
+  if (req.headers.range) headers['Range'] = req.headers.range;
+
+  try {
+    const r = await fetch(driveUrl, { headers, redirect: 'follow' });
+    const forward = { 'access-control-allow-origin': '*' };
+    for (const h of ['content-type', 'content-length', 'content-range', 'accept-ranges']) {
+      const v = r.headers.get(h);
+      if (v) forward[h] = v;
+    }
+    if (!forward['content-type'] || forward['content-type'].includes('text/html')) {
+      forward['content-type'] = 'video/mp4';
+    }
+    res.writeHead(r.status, forward);
+    const { Readable } = require('stream');
+    Readable.fromWeb(r.body).pipe(res);
+  } catch (e) {
+    res.writeHead(502, { 'Content-Type': 'text/plain; charset=utf-8' });
+    res.end('Ошибка проксирования Google Диска: ' + String(e.message || e));
   }
 }
 
@@ -126,6 +157,7 @@ function presence(room) {
   return [...room.clients.values()].map((m) => ({
     id: m.id,
     name: m.name,
+    avatar: m.avatar || null,
     host: m.host,
     voice: !!m.voice,
     pos: m.pos || null,
@@ -139,6 +171,7 @@ wss.on('connection', (ws, req) => {
   const roomId = (url.searchParams.get('room') || '').slice(0, 64);
   const name = (url.searchParams.get('name') || 'Гость').slice(0, 32);
   const cid = (url.searchParams.get('cid') || '').slice(0, 64);
+  const avatar = (url.searchParams.get('avatar') || '').slice(0, 500);
   if (!roomId) return ws.close();
 
   const room = getRoom(roomId);
@@ -170,7 +203,7 @@ wss.on('connection', (ws, req) => {
   }
 
   const isHost = tookOverHost || restoresHost || room.clients.size === 0;
-  const member = { id, name, cid, host: isHost, voice: false };
+  const member = { id, name, avatar, cid, host: isHost, voice: false };
   if (isHost) room.orphanHostCid = null;
   room.clients.set(ws, member);
   ws.isAlive = true;
@@ -266,6 +299,7 @@ function handleMessage(room, member, ws, msg) {
       const raw = msg.pos == null || msg.pos === '' ? NaN : Number(msg.pos);
       const entry = {
         from: member.name,
+        avatar: member.avatar || null,
         id: member.id,
         text,
         at: Date.now(),
@@ -334,10 +368,18 @@ function sanitizeMedia(m) {
   if (m.kind === 'direct' && typeof m.url === 'string' && /^https?:\/\/.+/i.test(m.url)) {
     return { kind: 'direct', url: m.url.trim() };
   }
+  if (m.kind === 'gdrive' && typeof m.fileId === 'string' && /^[a-zA-Z0-9_-]{15,65}$/.test(m.fileId)) {
+    return { kind: 'gdrive', fileId: m.fileId, url: `/stream/gdrive?id=${m.fileId}` };
+  }
   return null;
 }
 
 function parseMedia(url) {
+  const gdrive = url.match(/drive\.google\.com\/(?:file\/d\/([a-zA-Z0-9_-]+)|open\?id=([a-zA-Z0-9_-]+))/i);
+  if (gdrive) {
+    const fileId = gdrive[1] || gdrive[2];
+    return { kind: 'gdrive', fileId, url: `/stream/gdrive?id=${fileId}` };
+  }
   const direct = url.match(/^https?:\/\/.+?\.(?:mp4|webm|ogv|mov|m4v)(?:\?.*)?$/i);
   if (direct) return { kind: 'direct', url: url.trim() };
   const yt =

@@ -585,3 +585,48 @@ body:not(.in-room) header .room-info { display: none; }
 /* Direct HTML5 Video Player */
 #directBox { position: absolute; inset: 0; background: #000; display: flex; align-items: center; justify-content: center; }
 #directVideo { width: 100%; height: 100%; object-fit: contain; display: block; }
+
+/* Google Auth & User Avatars */
+.google-auth-section { margin-bottom: 12px; display: flex; justify-content: center; }
+.google-custom-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 16px;
+  background: #ffffff;
+  color: #3c4043;
+  border: 1px solid #dadce0;
+  border-radius: 24px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s, box-shadow 0.2s;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+}
+.google-custom-btn:hover {
+  background: #f8f9fa;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.12);
+}
+.user-badge {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  background: rgba(255,255,255,0.08);
+  border-radius: 20px;
+  padding: 6px 14px;
+  margin-bottom: 12px;
+  font-size: 13px;
+}
+.avatar-sm { width: 24px; height: 24px; border-radius: 50%; object-fit: cover; }
+.btn-text { background: transparent; border: none; color: #ff6b6b; cursor: pointer; font-size: 12px; margin-left: 4px; }
+
+/* Presence list avatars */
+#presence li { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.user-meta { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.u-avatar { width: 22px; height: 22px; border-radius: 50%; object-fit: cover; flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center; font-size: 11px; font-weight: bold; background: #6c5ce7; color: #fff; }
+.chat-avatar { width: 24px; height: 24px; border-radius: 50%; object-fit: cover; flex-shrink: 0; margin-right: 8px; }
+.msg { display: flex; align-items: flex-start; }
+.msg-body { flex: 1; min-width: 0; }

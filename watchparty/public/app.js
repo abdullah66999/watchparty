@@ -553,7 +553,7 @@ function loadMedia(media, state) {
   // в комнату посреди остановленного фильма), её и восстанавливаем.
   const fresh = !state || (!state.playing && !state.time);
   wantPlay = fresh || !!(state && state.playing);
-  if (media.kind === 'direct') {
+  if (media.kind === 'direct' || media.kind === 'gdrive') {
     if (playerReady) {
       try { player.pauseVideo(); } catch {}
     }
@@ -754,7 +754,7 @@ function playerTime() {
 
 function reportState() {
   if (!isHost) return;
-  if (currentVideo && currentVideo.kind === 'direct') {
+  if (currentVideo && (currentVideo.kind === 'direct' || currentVideo.kind === 'gdrive')) {
     const dv = $('directVideo');
     return send({ type: 'sync', playing: dv ? !dv.paused : false, time: dv ? dv.currentTime : 0 });
   }
@@ -771,7 +771,7 @@ function reportState() {
 
 function nowPlaying() {
   if (!currentVideo) return true;
-  if (currentVideo.kind === 'direct') {
+  if (currentVideo.kind === 'direct' || currentVideo.kind === 'gdrive') {
     const dv = $('directVideo');
     return dv ? !dv.paused : false;
   }
@@ -786,7 +786,7 @@ function nowPlaying() {
 function playNow() {
   if (!currentVideo) return;
   wantPlay = true;
-  if (currentVideo.kind === 'direct') {
+  if (currentVideo.kind === 'direct' || currentVideo.kind === 'gdrive') {
     const dv = $('directVideo');
     if (dv) dv.play().catch(() => showHint());
   } else if (currentVideo.kind === 'vk') vkCommand('play');
@@ -807,7 +807,7 @@ function hideHint() {
 // иначе каждые 2 секунды летит лишний play/pause/seek и плеер «заикается» на одном устройстве.
 function applyState(state) {
   if (!currentVideo || !state || isHost) return;
-  if (currentVideo.kind === 'direct') {
+  if (currentVideo.kind === 'direct' || currentVideo.kind === 'gdrive') {
     const dv = $('directVideo');
     if (!dv) return;
     const expected = state.playing ? state.time + (Date.now() - state.at) / 1000 : state.time;
@@ -1070,14 +1070,14 @@ function renderPresence(list) {
   for (const p of lastPresence) if (p.pos) peersPos.set(p.id, { t: p.pos.t, playing: !!p.pos.playing, at: Date.now() });
   const canPass = isHost && lastPresence.length > 1;
   $('presence').innerHTML = lastPresence
-    .map(
-      (p) =>
-        `<li data-id="${p.id}" data-name="${escapeHtml(p.name)}"><span>${p.host ? '👑 ' : ''}${escapeHtml(p.name)}${
-          p.voice ? ' 🎤' : ''
-        }${p.id === me ? ' <em>(ты)</em>' : ''} <span class="pos" data-pos="${p.id}"></span></span>${
-          canPass && !p.host ? '<button class="pass" title="Передать управление" aria-label="Передать управление">👑</button>' : ''
-        }</li>`
-    )
+    .map((p) => {
+      const avHtml = p.avatar ? `<img class="u-avatar" src="${escapeHtml(p.avatar)}" alt="" />` : `<span class="u-avatar">${escapeHtml((p.name || '?')[0])}</span>`;
+      return `<li data-id="${p.id}" data-name="${escapeHtml(p.name)}"><span class="user-meta">${avHtml} ${p.host ? '👑 ' : ''}${escapeHtml(p.name)}${
+        p.voice ? ' 🎤' : ''
+      }${p.id === me ? ' <em>(ты)</em>' : ''} <span class="pos" data-pos="${p.id}"></span></span>${
+        canPass && !p.host ? '<button class="pass" title="Передать управление" aria-label="Передать управление">👑</button>' : ''
+      }</li>`;
+    })
     .join('');
   $('presence').querySelectorAll('.pass').forEach((b) => {
     b.onclick = () => {
@@ -1132,6 +1132,7 @@ setInterval(updatePos, 500);
 
 function sameMedia(a, b) {
   if (!a || !b || a.kind !== b.kind) return false;
+  if (a.kind === 'gdrive') return a.fileId === b.fileId;
   if (a.kind === 'direct') return a.url === b.url;
   if (a.kind === 'vk') return a.oid === b.oid && a.id === b.id;
   return a.videoId === b.videoId;
@@ -1150,7 +1151,8 @@ function addChat(entry) {
   const cpos = Number.isFinite(entry.pos) && entry.pos >= 0 ? `<span class="cpos" title="На какой секунде был автор">⏱ ${fmtPos(
     entry.pos
   )}</span>` : '';
-  div.innerHTML = `<b>${escapeHtml(entry.from)}</b>${cpos} <span>${escapeHtml(entry.text)}</span>`;
+  const avHtml = entry.avatar ? `<img class="chat-avatar" src="${escapeHtml(entry.avatar)}" alt="" />` : '';
+  div.innerHTML = `${avHtml}<div class="msg-body"><b>${escapeHtml(entry.from)}</b>${cpos} <span>${escapeHtml(entry.text)}</span></div>`;
   showChatEmpty(false);
   $('chat').appendChild(div);
   $('chat').scrollTop = $('chat').scrollHeight;
@@ -1176,3 +1178,77 @@ function escapeHtml(s) {
 }
 
 room ? enterRoom(room) : showLobby();
+
+
+
+// Google Sign-In Integration
+window.onGoogleSignIn = function(response) {
+  try {
+    const parts = response.credential.split('.');
+    const payload = JSON.parse(decodeURIComponent(escape(atob(parts[1]))));
+    const user = {
+      name: payload.name || payload.given_name || 'Пользователь Google',
+      avatar: payload.picture || '',
+      email: payload.email || ''
+    };
+    localStorage.setItem('wp_google_user', JSON.stringify(user));
+    applyGoogleUser(user);
+  } catch (e) {
+    console.error('Google Sign In decode error:', e);
+  }
+};
+
+function applyGoogleUser(user) {
+  if (!user || !user.name) return;
+  const badge = $('userProfileBadge');
+  const img = $('userAvatarImg');
+  const nameSpan = $('userNameSpan');
+  const lobbyInput = $('lobbyName');
+  const nameInput = $('nameInput');
+  if (lobbyInput) lobbyInput.value = user.name;
+  if (nameInput) nameInput.value = user.name;
+  if (badge && img && nameSpan) {
+    img.src = user.avatar || '';
+    nameSpan.textContent = user.name;
+    badge.classList.remove('hidden');
+  }
+  const customBtn = $('customGoogleBtn');
+  if (customBtn) customBtn.classList.add('hidden');
+}
+
+window.addEventListener('load', () => {
+  try {
+    const saved = JSON.parse(localStorage.getItem('wp_google_user') || 'null');
+    if (saved) applyGoogleUser(saved);
+  } catch {}
+
+  const logoutBtn = $('logoutGoogleBtn');
+  if (logoutBtn) {
+    logoutBtn.addEventListener('click', () => {
+      localStorage.removeItem('wp_google_user');
+      $('userProfileBadge').classList.add('hidden');
+      $('customGoogleBtn').classList.remove('hidden');
+      $('lobbyName').value = '';
+    });
+  }
+
+  const customBtn = $('customGoogleBtn');
+  if (customBtn) {
+    customBtn.addEventListener('click', () => {
+      // Prompt user or trigger prompt
+      if (window.google && google.accounts && google.accounts.id) {
+        google.accounts.id.prompt();
+      } else {
+        const name = prompt('Введи имя аккаунта Google:', 'Alex Google');
+        if (name) {
+          const mockUser = {
+            name,
+            avatar: 'https://lh3.googleusercontent.com/a/default-user=s96-c'
+          };
+          localStorage.setItem('wp_google_user', JSON.stringify(mockUser));
+          applyGoogleUser(mockUser);
+        }
+      }
+    });
+  }
+});
