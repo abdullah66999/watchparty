@@ -279,7 +279,7 @@ function handleMessage(room, member, ws, msg) {
     case 'setMedia': {
       if (!member.host) return send(ws, { type: 'error', text: 'Только хост может менять видео' });
       const media = sanitizeMedia(msg.media) || parseMedia(String(msg.url || ''));
-      if (!media) return send(ws, { type: 'error', text: 'Не удалось распознать ссылку YouTube или VK Видео' });
+      if (!media) return send(ws, { type: 'error', text: 'Не удалось распознать ссылку (поддерживаются YouTube, VK Видео, MP4/WebM)' });
       room.media = media;
       room.state = { playing: false, time: 0, at: Date.now() };
       broadcast(room, { type: 'media', media: room.media, state: room.state });
@@ -331,10 +331,15 @@ function sanitizeMedia(m) {
   if (m.kind === 'vk' && Number.isFinite(Number(m.oid)) && Number.isFinite(Number(m.id)) && Number(m.id) > 0) {
     return { kind: 'vk', oid: Number(m.oid), id: Number(m.id) };
   }
+  if (m.kind === 'direct' && typeof m.url === 'string' && /^https?:\/\/.+/i.test(m.url)) {
+    return { kind: 'direct', url: m.url.trim() };
+  }
   return null;
 }
 
 function parseMedia(url) {
+  const direct = url.match(/^https?:\/\/.+?\.(?:mp4|webm|ogv|mov|m4v)(?:\?.*)?$/i);
+  if (direct) return { kind: 'direct', url: url.trim() };
   const yt =
     url.match(/(?:youtube\.com\/(?:watch\?v=|live\/|embed\/|shorts\/)|youtu\.be\/)([\w-]{11})/) ||
     url.match(/^[\w-]{11}$/);

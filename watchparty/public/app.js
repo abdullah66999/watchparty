@@ -512,6 +512,10 @@ function setHost(v) {
 function hideAllPlayers() {
   $('player').classList.add('hidden');
   $('vkBox').classList.add('hidden');
+  const db = $('directBox');
+  if (db) db.classList.add('hidden');
+  const dv = $('directVideo');
+  if (dv) dv.pause();
 }
 
 let mediaToken = 0;
@@ -549,6 +553,31 @@ function loadMedia(media, state) {
   // в комнату посреди остановленного фильма), её и восстанавливаем.
   const fresh = !state || (!state.playing && !state.time);
   wantPlay = fresh || !!(state && state.playing);
+  if (media.kind === 'direct') {
+    if (playerReady) {
+      try { player.pauseVideo(); } catch {}
+    }
+    hideAllPlayers();
+    const db = $('directBox');
+    const dv = $('directVideo');
+    if (db && dv) {
+      db.classList.remove('hidden');
+      if (dv.src !== media.url) {
+        dv.src = media.url;
+        dv.load();
+      }
+      if (state && typeof state.time === 'number') {
+        dv.currentTime = state.time;
+      }
+      if (state && state.playing) {
+        dv.play().catch(() => showHint());
+      } else {
+        dv.pause();
+      }
+    }
+    return;
+  }
+
   if (media.kind === 'vk') {
     if (playerReady) {
       try {
@@ -725,6 +754,10 @@ function playerTime() {
 
 function reportState() {
   if (!isHost) return;
+  if (currentVideo && currentVideo.kind === 'direct') {
+    const dv = $('directVideo');
+    return send({ type: 'sync', playing: dv ? !dv.paused : false, time: dv ? dv.currentTime : 0 });
+  }
   if (currentVideo && currentVideo.kind === 'vk') {
     return send({ type: 'sync', playing: vkPlaying, time: vkTime });
   }
@@ -738,6 +771,10 @@ function reportState() {
 
 function nowPlaying() {
   if (!currentVideo) return true;
+  if (currentVideo.kind === 'direct') {
+    const dv = $('directVideo');
+    return dv ? !dv.paused : false;
+  }
   if (currentVideo.kind === 'vk') return vkPlaying;
   try {
     return !playerReady || player.getPlayerState() === YT.PlayerState.PLAYING;
@@ -749,7 +786,10 @@ function nowPlaying() {
 function playNow() {
   if (!currentVideo) return;
   wantPlay = true;
-  if (currentVideo.kind === 'vk') vkCommand('play');
+  if (currentVideo.kind === 'direct') {
+    const dv = $('directVideo');
+    if (dv) dv.play().catch(() => showHint());
+  } else if (currentVideo.kind === 'vk') vkCommand('play');
   else if (playerReady) {
     try {
       player.playVideo();
@@ -767,6 +807,21 @@ function hideHint() {
 // иначе каждые 2 секунды летит лишний play/pause/seek и плеер «заикается» на одном устройстве.
 function applyState(state) {
   if (!currentVideo || !state || isHost) return;
+  if (currentVideo.kind === 'direct') {
+    const dv = $('directVideo');
+    if (!dv) return;
+    const expected = state.playing ? state.time + (Date.now() - state.at) / 1000 : state.time;
+    const drift = Math.abs(dv.currentTime - expected);
+    if (state.playing && dv.paused) {
+      dv.play().catch(() => showHint());
+    } else if (!state.playing && !dv.paused) {
+      dv.pause();
+    }
+    if (drift > 1.5) {
+      dv.currentTime = expected;
+    }
+    return;
+  }
   if (document.hidden) return; // фоновая вкладка всё равно не играет — вернёмся на visibilitychange
   if (currentVideo.kind === 'vk' && vkAd) return; // время рекламы — не время фильма
   // Перемотку плеер догоняет несколько секунд: в это окно не ищем заново и не restart-им старт,
@@ -1076,7 +1131,10 @@ function updatePosChip(el, id, host, hostRec) {
 setInterval(updatePos, 500);
 
 function sameMedia(a, b) {
-  return !!a && !!b && a.kind === b.kind && (a.kind === 'vk' ? a.oid === b.oid && a.id === b.id : a.videoId === b.videoId);
+  if (!a || !b || a.kind !== b.kind) return false;
+  if (a.kind === 'direct') return a.url === b.url;
+  if (a.kind === 'vk') return a.oid === b.oid && a.id === b.id;
+  return a.videoId === b.videoId;
 }
 
 function renderChat(list) {
